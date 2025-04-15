@@ -89,3 +89,43 @@ This module serves as a complementary approach to existing steganographic techni
 - Kumarage, T., Garland, J., Bhattacharjee, A., Trapeznikov, K., Ruston, S., & Liu, H. (2023). Stylometric Detection of AI-Generated Text in Twitter Timelines.
 - Bennett, K. (2004). Linguistic steganography: Survey, analysis, and robustness concerns for hiding information in text.
 - Taskiran, C.M., et al. (2006). Attacks on lexical natural language steganography systems.
+
+---
+
+# Module: stylometric_carrier.genai.mts
+
+**Version:** 0.2.0 (Implementation Update: 2025-04-15)
+
+**Role:** Provides a toolkit of individual stylometric carrier techniques. Each technique encapsulates logic to analyze text capacity for that specific feature, embed bits by modifying the feature, and extract bits by analyzing the feature.
+
+**Design Goals:**
+
+*   Implement various stylometric manipulation techniques identified in research (Kumarage et al., 2023) as potential carriers.
+*   Provide functions (`apply`, `extract`, `estimate`) for each technique.
+*   Ensure techniques operate locally on text segments where possible.
+*   Use `compromise` library for NLP tasks (sentence splitting, POS tagging, etc.).
+*   Prioritize functional correctness of embedding/extraction over perfect linguistic naturalness in this implementation phase.
+
+**Architectural Constraints:**
+
+*   Relies on `stylometric_detection.genai.mjs` (specifically `StyleFeatureExtractor`) for consistency in feature definitions, although direct dependency is minimized.
+*   Acts as a dependency for `safety_stylometric_encoder.genai.mts` and `stylometric_fusion.genai.mts`.
+*   `apply` methods take text and bits, return modified text and bits consumed.
+*   `extract` methods take text, return extracted bits.
+*   `estimate` methods take text, return estimated bit capacity.
+*   Techniques should handle basic errors gracefully (e.g., insufficient text features).
+
+**Paradigm:** Primarily [paradigm:functional] for analysis (`estimate`) and data transformation (bits to bytes), but necessarily [paradigm:imperative] for the core text manipulation logic within `apply` and `extract` due to sequential processing and modification of text state.
+
+**Interactions:**
+
+*   **Called By:** `StylometricCarrier` class methods (`encodePayload`, `extractPayload`, `analyzeCarryingCapacity`).
+*   **Calls:** `compromise` library functions (`nlp()`, `.sentences()`, `.terms()`, etc.).
+
+**LLM Regeneration Context:**
+
+*   Focus on implementing the specific text manipulation logic for each carrier's `apply` and `extract` methods based on the comments and technique descriptions.
+*   Synonym substitution requires a small, predefined list of synonym pairs.
+*   Optional comma and voice style implementations use simplified heuristics based on sentence structure or keywords.
+*   Ensure bit manipulation (bytesToBits, bitsToBytes) is correct.
+*   Error handling should prevent crashes but may return empty results or partial encodings if text lacks features.

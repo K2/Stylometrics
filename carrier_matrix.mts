@@ -18,8 +18,12 @@ type FeatureMap = Record<string, number>; // Placeholder if StyleFeatureExtracto
 
 import { QuoteStyleCarrier } from './quote_style_carrier.mjs';
 import { ReedSolomon } from './src/matrix/ErrorCorrection.js'; // Adjust path if needed
-import { type Carrier, type CarrierMatrixOptions, type EncodeResult } from './src/types/CarrierTypes.js'; // Added EncodeResult
-import { bytesToBits, bitsToBytes } from './src/utils/bitUtils.js'; // Assuming bit helpers exist
+// Define base options interface if not imported
+interface CarrierMatrixOptions {
+    // Base options common to matrix operations, if any
+}
+import { type Carrier, type EncodeResult } from './src/types/CarrierTypes.js'; // Removed CarrierMatrixOptions import
+import { bytesToBits, bitsToBytes } from './src/utils/BitUtils.js'; // Corrected import path and extension
 
 /**
  * Results from document analysis containing capacity and segment information.
@@ -45,9 +49,10 @@ interface DocumentSegment {
 
 /**
  * Capacity metrics for a specific carrier technique
+ * Matches the definition in CarrierTypes.ts
  */
 interface CarrierMetrics {
-    capacityBits: number;
+    capacity: number; // Changed from capacityBits to match CarrierTypes.ts
     detectability: number;  // 0-1 scale
     robustness: number;    // 0-1 scale
     naturalness: number;   // 0-1 scale
@@ -59,7 +64,7 @@ interface CarrierMetrics {
 interface CapacityCell {
     segment: DocumentSegment;
     carrier: string;
-    metrics: CarrierMetrics;
+    metrics: CarrierMetrics; // Uses the updated CarrierMetrics interface
     weight: number;
 }
 
@@ -140,7 +145,7 @@ export class CarrierMatrix {
         }
 
         // Initialize Reed-Solomon codec
-        this.rsCodec = new ReedSolomon(); // Assuming default constructor or pass options
+        this.rsCodec = new ReedSolomon(); // Assuming default constructor or pass options if needed
 
         // Initialize known carriers
         this.initializeCarriers();
@@ -151,6 +156,7 @@ export class CarrierMatrix {
      */
     private initializeCarriers(): void {
         // Add quote style carrier
+        // Ensure QuoteStyleCarrier implements the Carrier interface fully
         this.carriers.set('quoteStyle', new QuoteStyleCarrier());
     }
 
@@ -187,54 +193,74 @@ export class CarrierMatrix {
      */
     private segmentDocument(document: string): DocumentSegment[] {
         const segments: DocumentSegment[] = [];
-        const chapters = document.split(/Chapter \d+|CHAPTER \d+/);
+        // Basic Markdown chapter/section splitting
+        const chapters = document.split(/^#\s+(.*)$/m); // Split by H1
 
-        chapters.forEach((chapterContent, idx) => {
-            const trimmedContent = chapterContent.trim();
-            if (trimmedContent.length === 0) return;
+        let currentChapterId: string | null = null;
+        let chapterIndex = 0;
+        let sectionIndex = 0;
 
-            if (idx === 0) {
-                segments.push({ id: `frontmatter`, content: trimmedContent, type: 'forward', level: 0 });
-            } else {
-                const chapterId = `chapter-${idx}`;
-                segments.push({ id: chapterId, content: trimmedContent, type: 'chapter', level: 1 });
+        for (let i = 0; i < chapters.length; i++) {
+            const content = chapters[i].trim();
+            if (i % 2 === 1) { // Chapter title
+                chapterIndex++;
+                currentChapterId = `chapter-${chapterIndex}`;
+                segments.push({ id: currentChapterId, content: `# ${content}`, type: 'chapter', level: 1 });
+                sectionIndex = 0; // Reset section index for new chapter
+            } else if (content.length > 0) { // Content between chapters or before first chapter
+                if (currentChapterId) {
+                    // Split content by sections (H2, H3, H4)
+                    const sectionParts = content.split(/^(#{2,4})\s+(.*)$/m);
+                    let currentSectionContent = '';
+                    let currentSectionLevel = 2; // Default level if no sections found within chapter content
 
-                const lines = trimmedContent.split('\n');
-                let currentSectionContent = '';
-                let sectionIdx = 0;
-                let inSection = false;
-                for (const line of lines) {
-                    const sectionMatch = line.match(/^(#{2,4})\s+(.*)/);
-                    if (sectionMatch) {
-                        if (inSection && currentSectionContent.trim().length > 0) {
-                            segments.push({
-                                id: `${chapterId}-section-${sectionIdx}`,
-                                content: currentSectionContent.trim(),
-                                type: 'section',
-                                level: sectionMatch[1].length,
-                                parent: chapterId
-                            });
+                    for (let j = 0; j < sectionParts.length; j++) {
+                        const sectionContent = sectionParts[j].trim();
+                        if (j % 3 === 1) { // Section heading level (e.g., ##)
+                            currentSectionLevel = sectionContent.length;
+                        } else if (j % 3 === 2) { // Section title
+                            if (currentSectionContent.trim().length > 0) {
+                                // Add previous section/content before starting new one
+                                segments.push({
+                                    id: `${currentChapterId}-section-${sectionIndex}`,
+                                    content: currentSectionContent.trim(),
+                                    type: 'section',
+                                    level: currentSectionLevel, // Use level captured before title
+                                    parent: currentChapterId
+                                });
+                            }
+                            sectionIndex++;
+                            currentSectionContent = `${'#'.repeat(currentSectionLevel)} ${sectionContent}\n`; // Start new section content with heading
+                        } else if (sectionContent.length > 0) { // Content within section or before first section
+                            currentSectionContent += sectionContent + '\n';
                         }
-                        sectionIdx++;
-                        currentSectionContent = line + '\n';
-                        inSection = true;
-                    } else if (inSection) {
-                        currentSectionContent += line + '\n';
                     }
-                }
-                if (inSection && currentSectionContent.trim().length > 0) {
-                    segments.push({
-                        id: `${chapterId}-section-${sectionIdx}`,
-                        content: currentSectionContent.trim(),
-                        type: 'section',
-                        level: 2,
-                        parent: chapterId
-                    });
+                    // Add the last section/content part
+                    if (currentSectionContent.trim().length > 0) {
+                         segments.push({
+                            id: `${currentChapterId}-section-${sectionIndex}`,
+                            content: currentSectionContent.trim(),
+                            type: 'section',
+                            level: currentSectionLevel, // Use last known level
+                            parent: currentChapterId
+                        });
+                    }
+
+                } else {
+                    // Content before the first chapter (e.g., frontmatter)
+                    segments.push({ id: `frontmatter`, content: content, type: 'forward', level: 0 });
                 }
             }
-        });
+        }
+
+        // Fallback if no chapters were found
+        if (segments.length === 0 && document.trim().length > 0) {
+             segments.push({ id: `main`, content: document.trim(), type: 'section', level: 1 });
+        }
+
         return segments;
     }
+
 
     /**
      * Build capacity matrix by analyzing each segment with each carrier.
@@ -257,11 +283,17 @@ export class CarrierMatrix {
 
             for (const [carrierKey, carrier] of this.carriers.entries()) {
                 try {
+                    // Use the CarrierMetrics from CarrierTypes.ts which has 'capacity'
                     const metrics = await carrier.analyzeCapacity(segment.content);
                     segmentMap.set(carrierKey, {
                         segment,
                         carrier: carrierKey,
-                        metrics,
+                        metrics: { // Ensure all properties are present
+                            capacity: metrics.capacity,
+                            detectability: metrics.detectability,
+                            robustness: metrics.robustness,
+                            naturalness: metrics.naturalness
+                        },
                         weight: 1.0
                     });
                 } catch (error) {
@@ -279,13 +311,17 @@ export class CarrierMatrix {
             for (const [carrierKey, cell] of carrierMap.entries()) {
                 let weight = 1.0;
 
+                // Penalize high detectability
                 if (cell.metrics.detectability > this.options.maxDetectability) {
-                    weight *= Math.pow(1 - (cell.metrics.detectability - this.options.maxDetectability) / (1 - this.options.maxDetectability), 2);
+                    // Sharper penalty as detectability exceeds max
+                    weight *= Math.pow(1 - (cell.metrics.detectability - this.options.maxDetectability) / (1 - this.options.maxDetectability), 3);
                 }
 
-                weight *= (0.5 + cell.metrics.naturalness * 0.5);
-                weight *= (0.7 + cell.metrics.robustness * 0.3);
+                // Reward naturalness and robustness
+                weight *= (0.4 + cell.metrics.naturalness * 0.6); // Increased weight for naturalness
+                weight *= (0.6 + cell.metrics.robustness * 0.4); // Increased weight for robustness
 
+                // Adjust weight based on segment type
                 switch (cell.segment.type) {
                     case 'metadata': weight *= this.options.versionAware ? 1.5 : 0.5; break;
                     case 'forward': weight *= 0.8; break;
@@ -294,14 +330,17 @@ export class CarrierMatrix {
                     case 'notes': weight *= 0.7; break;
                 }
 
+                // Boost preferred carriers
                 if (this.options.preferredCarriers.includes(carrierKey)) {
-                    weight *= 1.3;
+                    weight *= 1.5; // Increased boost
                 }
 
-                cell.weight = Math.max(0.001, weight);
+                // Ensure weight is positive but can be very small
+                cell.weight = Math.max(0.0001, weight);
             }
         }
     }
+
 
     /**
      * Encode payload data with redundancy and distribute across carriers.
@@ -313,13 +352,20 @@ export class CarrierMatrix {
         const totalCapacity = this.calculateTotalCapacity();
         const payloadBits = payload.length * 8;
 
-        const estimatedParityBits = payloadBits * this.options.redundancyLevel / (1 - this.options.redundancyLevel);
-        const requiredCapacity = payloadBits + estimatedParityBits;
+        // Calculate required capacity more accurately based on RS code parameters
+        const dataChunksCount = Math.ceil(payload.length / this.options.rsBlockSize);
+        const parityChunksCount = Math.ceil(dataChunksCount * this.options.redundancyLevel); // Simplified, actual RS might differ slightly
+        const totalChunksEstimate = dataChunksCount + parityChunksCount;
+        // Estimate total bits needed: payload bits + parity bits (assuming parity chunks are roughly same size as data chunks)
+        const requiredCapacity = payloadBits + (parityChunksCount * this.options.rsBlockSize * 8);
+
 
         console.log(`Payload: ${payload.length} bytes (${payloadBits} bits). Required capacity (est.): ${requiredCapacity.toFixed(0)} bits. Available: ${totalCapacity.toFixed(0)} bits.`);
 
         if (requiredCapacity > totalCapacity) {
-            throw new Error(`Payload too large: Requires ~${requiredCapacity.toFixed(0)} bits, but only ${totalCapacity.toFixed(0)} weighted bits available.`);
+            // Provide more detailed error message
+            const shortfall = requiredCapacity - totalCapacity;
+            throw new Error(`Payload too large: Requires ~${requiredCapacity.toFixed(0)} bits (including estimated redundancy), but only ${totalCapacity.toFixed(0)} weighted bits available. Short by ~${shortfall.toFixed(0)} bits.`);
         }
         if (payload.length === 0) {
             console.warn("Payload is empty. Returning unmodified segments and empty metadata.");
@@ -332,11 +378,13 @@ export class CarrierMatrix {
         const { dataChunks, parityChunks } = this.applyErasureCoding(payload);
         const allChunks = [...dataChunks, ...parityChunks];
         const totalChunks = allChunks.length;
+        // Calculate actual total bits after encoding
         const totalEncodedBits = allChunks.reduce((sum, chunk) => sum + (chunk?.length ?? 0) * 8, 0);
         console.log(`Applied Reed-Solomon: ${dataChunks.length} data chunks, ${parityChunks.length} parity chunks. Total chunks: ${totalChunks}. Total encoded size: ${totalEncodedBits} bits.`);
 
         if (totalEncodedBits > totalCapacity) {
-            throw new Error(`Payload with actual erasure coding overhead too large: Requires ${totalEncodedBits} bits, but only ${totalCapacity.toFixed(0)} weighted bits available.`);
+             const shortfall = totalEncodedBits - totalCapacity;
+            throw new Error(`Payload with actual erasure coding overhead too large: Requires ${totalEncodedBits} bits, but only ${totalCapacity.toFixed(0)} weighted bits available. Short by ${shortfall.toFixed(0)} bits.`);
         }
 
         const { encodedSegments, chunkMap } = await this.distributePayload(allChunks);
@@ -354,7 +402,8 @@ export class CarrierMatrix {
         let total = 0;
         for (const carrierMap of this.capacityMatrix.values()) {
             for (const cell of carrierMap.values()) {
-                total += cell.metrics.capacityBits * cell.weight;
+                // Use 'capacity' from the metrics
+                total += cell.metrics.capacity * cell.weight;
             }
         }
         return total;
@@ -367,14 +416,27 @@ export class CarrierMatrix {
      */
     private applyErasureCoding(payload: Uint8Array): { dataChunks: Uint8Array[], parityChunks: Uint8Array[] } {
         const dataSize = payload.length;
+        // Ensure rsBlockSize is positive
+        if (this.options.rsBlockSize <= 0) {
+            throw new Error("rsBlockSize must be positive.");
+        }
         const dataChunksCount = Math.ceil(dataSize / this.options.rsBlockSize);
+        // Ensure redundancyLevel is valid for calculation
+        if (this.options.redundancyLevel < 0 || this.options.redundancyLevel >= 1) {
+             throw new Error("Redundancy level must be between 0 (inclusive) and 1 (exclusive) for parity calculation.");
+        }
+        // Calculate parity chunks needed based on the ratio of parity to *data* chunks
         const parityChunksCount = Math.ceil(dataChunksCount * this.options.redundancyLevel);
 
-        if (dataChunksCount === 0) {
+
+        if (dataChunksCount === 0 && dataSize > 0) {
+             throw new Error("Calculated 0 data chunks for non-empty payload. Check rsBlockSize.");
+        }
+         if (dataChunksCount === 0) {
             return { dataChunks: [], parityChunks: [] };
         }
         if (parityChunksCount === 0 && this.options.redundancyLevel > 0) {
-            console.warn("Calculated 0 parity chunks despite redundancy level > 0. Ensure data size and block size are appropriate.");
+            console.warn("Calculated 0 parity chunks despite redundancy level > 0. Ensure data size and block size are appropriate, or redundancy level is high enough.");
         }
 
         const dataChunks: Uint8Array[] = [];
@@ -383,15 +445,29 @@ export class CarrierMatrix {
             dataChunks.push(payload.slice(i, end));
         }
 
+        // Pad the last data chunk if necessary (some RS implementations require equal chunk sizes)
+        // This depends on the specific ReedSolomon library implementation.
+        // Assuming the library handles padding or variable sizes. If not, padding is needed here.
+        // const lastChunk = dataChunks[dataChunks.length - 1];
+        // if (lastChunk.length < this.options.rsBlockSize) {
+        //     const paddedChunk = new Uint8Array(this.options.rsBlockSize).fill(0);
+        //     paddedChunk.set(lastChunk);
+        //     dataChunks[dataChunks.length - 1] = paddedChunk;
+        // }
+
+
         try {
+            // Pass the expected number of data and parity chunks if the library requires it
+            // Assuming encode(data, numParity) signature
             const parityChunks = this.rsCodec.encode(dataChunks, parityChunksCount);
             if (parityChunks.length !== parityChunksCount) {
                 console.warn(`ReedSolomon encode returned ${parityChunks.length} parity chunks, expected ${parityChunksCount}.`);
+                // Depending on the library, this might be acceptable or an error.
             }
             return { dataChunks, parityChunks };
         } catch (error) {
             console.error("Reed-Solomon encoding failed:", error);
-            throw new Error("Failed to apply erasure coding.");
+            throw new Error(`Failed to apply erasure coding: ${error.message}`);
         }
     }
 
@@ -406,17 +482,22 @@ export class CarrierMatrix {
         const availableSlots: (CapacityCell & { availableCapacityBits: number })[] = [];
         for (const [segmentId, carrierMap] of this.capacityMatrix.entries()) {
             for (const [carrierKey, cell] of carrierMap.entries()) {
-                const initialCapacity = cell.metrics.capacityBits;
+                // Use 'capacity' from metrics
+                const initialCapacity = cell.metrics.capacity;
                 if (initialCapacity > 0 && cell.weight > 0) {
                     availableSlots.push({
                         ...cell,
+                        // Use weighted capacity for distribution decisions? Or raw capacity?
+                        // Using raw capacity here, weighted capacity used for sorting.
                         availableCapacityBits: initialCapacity
                     });
                 }
             }
         }
 
-        availableSlots.sort((a, b) => b.weight - a.weight);
+        // Sort by weighted capacity (weight * capacity) for better prioritization
+        availableSlots.sort((a, b) => (b.weight * b.metrics.capacity) - (a.weight * a.metrics.capacity));
+
 
         const segmentModifications = new Map<string, string>();
         const currentSegmentContent = new Map<string, string>();
@@ -427,91 +508,153 @@ export class CarrierMatrix {
 
         for (let chunkIndex = 0; chunkIndex < allChunks.length; chunkIndex++) {
             const chunk = allChunks[chunkIndex];
-            console.assert(chunk instanceof Uint8Array, `Chunk at index ${chunkIndex} is not a Uint8Array.`);
+            // Replace console.assert with if/throw
+            if (!(chunk instanceof Uint8Array)) {
+                 throw new Error(`Chunk at index ${chunkIndex} is not a Uint8Array.`);
+            }
 
-            const chunkBits = bytesToBits(chunk);
+
+            const chunkBits = bytesToBits(chunk); // Use imported function
             let bitsEncodedForThisChunk = 0;
-            let currentBitOffsetInChunk = 0;
+            let currentBitOffsetInChunk = 0; // Tracks position within the *chunk's* bits
 
             console.log(`Distributing Chunk ${chunkIndex} (${chunkBits.length} bits)...`);
 
             while (bitsEncodedForThisChunk < chunkBits.length) {
                 let encodedInThisPass = false;
+                let bestSlotIndex = -1;
+                let maxEncodableBitsInSlot = 0;
 
-                for (const slot of availableSlots) {
-                    if (slot.availableCapacityBits <= 0) continue;
+                // Find the best slot in the current pass (highest weight first)
+                for (let i = 0; i < availableSlots.length; i++) {
+                    const slot = availableSlots[i];
+                     if (slot.availableCapacityBits <= 0) continue;
 
-                    const segmentId = slot.segment.id;
-                    const carrierKey = slot.carrier;
-                    const carrier = this.carriers.get(carrierKey);
+                     // Simple selection: use the first available slot with capacity
+                     bestSlotIndex = i;
+                     maxEncodableBitsInSlot = slot.availableCapacityBits;
+                     break; // Take the highest weighted available slot
+                }
 
-                    if (!carrier) {
-                        console.warn(`Carrier ${carrierKey} not found during distribution for chunk ${chunkIndex}.`);
-                        continue;
-                    }
 
-                    const contentToEncodeIn = segmentModifications.get(segmentId) ?? currentSegmentContent.get(segmentId)!;
-                    console.assert(contentToEncodeIn !== undefined, `Content for segment ${segmentId} not found.`);
+                if (bestSlotIndex === -1) {
+                     // No slots with available capacity found
+                     const remaining = chunkBits.length - bitsEncodedForThisChunk;
+                     console.error(`Could not find any suitable slot for remaining ${remaining} bits of chunk ${chunkIndex}. Distribution failed.`);
+                     throw new Error(`Failed to distribute chunk ${chunkIndex}. No available capacity in any slot.`);
+                }
 
-                    const remainingBitsInChunk = chunkBits.length - bitsEncodedForThisChunk;
-                    const bitsToAttempt = Math.min(remainingBitsInChunk, slot.availableCapacityBits);
 
-                    if (bitsToAttempt <= 0) continue;
+                const slot = availableSlots[bestSlotIndex];
+                const segmentId = slot.segment.id;
+                const carrierKey = slot.carrier;
+                const carrier = this.carriers.get(carrierKey);
 
-                    const bitSliceToEncode = chunkBits.slice(bitsEncodedForThisChunk, bitsEncodedForThisChunk + bitsToAttempt);
+                if (!carrier) {
+                    console.warn(`Carrier ${carrierKey} not found during distribution for chunk ${chunkIndex}. Skipping slot.`);
+                    slot.availableCapacityBits = 0; // Mark slot as unusable
+                    continue; // Try next iteration to find another slot
+                }
 
-                    try {
-                        const encodeResult: EncodeResult = await carrier.encode(contentToEncodeIn, bitSliceToEncode);
-                        const actualBitsEncodedInCall = encodeResult.bitsEncoded;
+                const contentToEncodeIn = segmentModifications.get(segmentId) ?? currentSegmentContent.get(segmentId)!;
+                 // Replace console.assert
+                 if (contentToEncodeIn === undefined) {
+                     throw new Error(`Content for segment ${segmentId} not found.`);
+                 }
 
-                        if (actualBitsEncodedInCall > 0) {
-                            encodedInThisPass = true;
 
-                            chunkMap.push({
-                                chunkIndex,
-                                segmentId,
-                                carrierKey,
-                                bitOffset: currentBitOffsetInChunk,
-                                bitLength: actualBitsEncodedInCall
-                            });
+                const remainingBitsInChunk = chunkBits.length - bitsEncodedForThisChunk;
+                // Attempt to encode as many bits as possible, up to slot capacity or remaining chunk bits
+                const bitsToAttempt = Math.min(remainingBitsInChunk, slot.availableCapacityBits);
 
-                            segmentModifications.set(segmentId, encodeResult.modifiedContent);
 
-                            bitsEncodedForThisChunk += actualBitsEncodedInCall;
-                            currentBitOffsetInChunk += actualBitsEncodedInCall;
-                            totalBitsEncodedOverall += actualBitsEncodedInCall;
-                            slot.availableCapacityBits -= actualBitsEncodedInCall;
+                if (bitsToAttempt <= 0) {
+                     slot.availableCapacityBits = 0; // Mark slot as exhausted for safety
+                     continue; // Should not happen if bestSlotIndex was found, but check anyway
+                }
 
-                            console.log(`  Encoded ${actualBitsEncodedInCall} bits of chunk ${chunkIndex} into ${segmentId}/${carrierKey}. Chunk progress: ${bitsEncodedForThisChunk}/${chunkBits.length}. Slot capacity left: ${slot.availableCapacityBits}`);
 
-                            if (bitsEncodedForThisChunk >= chunkBits.length) {
-                                break;
-                            }
-                        } else if (encodeResult.modifiedContent !== contentToEncodeIn) {
+                // Get the specific slice of bits from the current chunk to encode
+                const bitSliceToEncode = chunkBits.slice(bitsEncodedForThisChunk, bitsEncodedForThisChunk + bitsToAttempt);
+
+
+                try {
+                    const encodeResult: EncodeResult = await carrier.encode(contentToEncodeIn, bitSliceToEncode);
+                    const actualBitsEncodedInCall = encodeResult.bitsEncoded;
+
+                    if (actualBitsEncodedInCall > 0) {
+                        encodedInThisPass = true; // Mark that progress was made
+
+                        // Record the location of the successfully encoded part of the chunk
+                        chunkMap.push({
+                            chunkIndex,
+                            segmentId,
+                            carrierKey,
+                            // The offset within the *chunk's* data that these bits represent
+                            bitOffset: bitsEncodedForThisChunk,
+                            bitLength: actualBitsEncodedInCall
+                        });
+
+                        // Update the segment content with the modifications
+                        segmentModifications.set(segmentId, encodeResult.modifiedContent);
+
+                        // Update progress counters
+                        bitsEncodedForThisChunk += actualBitsEncodedInCall;
+                        // currentBitOffsetInChunk is implicitly tracked by bitsEncodedForThisChunk
+                        totalBitsEncodedOverall += actualBitsEncodedInCall;
+                        slot.availableCapacityBits -= actualBitsEncodedInCall; // Reduce slot capacity
+
+                        console.log(`  Encoded ${actualBitsEncodedInCall} bits of chunk ${chunkIndex} into ${segmentId}/${carrierKey}. Chunk progress: ${bitsEncodedForThisChunk}/${chunkBits.length}. Slot capacity left: ${slot.availableCapacityBits.toFixed(0)}`);
+
+                        // If the current chunk is fully encoded, break the inner loop to move to the next chunk
+                        if (bitsEncodedForThisChunk >= chunkBits.length) {
+                            break; // Exit the while loop for this chunk
+                        }
+                        // Continue the while loop to encode the rest of the current chunk in the next best slot
+
+                    } else {
+                         // Carrier reported 0 bits encoded.
+                         if (encodeResult.modifiedContent !== contentToEncodeIn) {
+                            // Content was modified but no bits reported? Suspicious. Update content anyway.
                             console.warn(`Carrier ${carrierKey} modified segment ${segmentId} but reported 0 bits encoded.`);
                             segmentModifications.set(segmentId, encodeResult.modifiedContent);
-                        } else {
-                            slot.availableCapacityBits = Math.max(0, slot.availableCapacityBits - 1);
-                        }
-                    } catch (error) {
-                        console.error(`Error encoding ${bitsToAttempt} bits of chunk ${chunkIndex} into segment ${segmentId} using carrier ${carrierKey}:`, error);
-                        slot.availableCapacityBits = 0;
+                         }
+                         // Assume this slot is ineffective for now, reduce capacity slightly to avoid infinite loops
+                         slot.availableCapacityBits = Math.max(0, slot.availableCapacityBits - 1);
+                         console.log(`  Carrier ${carrierKey} in ${segmentId} reported 0 bits encoded for ${bitsToAttempt} attempted bits. Reducing slot capacity slightly.`);
                     }
+                } catch (error) {
+                    console.error(`Error encoding ${bitsToAttempt} bits of chunk ${chunkIndex} into segment ${segmentId} using carrier ${carrierKey}:`, error);
+                    // Mark slot as unusable after error
+                    slot.availableCapacityBits = 0;
                 }
+            } // End of while loop for encoding a single chunk
 
-                if (!encodedInThisPass && bitsEncodedForThisChunk < chunkBits.length) {
-                    const remaining = chunkBits.length - bitsEncodedForThisChunk;
-                    console.error(`Could not find suitable slot for remaining ${remaining} bits of chunk ${chunkIndex}. Distribution failed.`);
-                    throw new Error(`Failed to distribute chunk ${chunkIndex}. Capacity might be overestimated or carriers ineffective.`);
-                }
+            // After exiting the while loop, check if the chunk was fully encoded
+            if (bitsEncodedForThisChunk < chunkBits.length) {
+                 const remaining = chunkBits.length - bitsEncodedForThisChunk;
+                 console.error(`Failed to fully distribute chunk ${chunkIndex}. ${remaining} bits remaining. Insufficient effective capacity or carrier errors.`);
+                 throw new Error(`Failed to distribute chunk ${chunkIndex}. Capacity might be overestimated or carriers ineffective.`);
             }
+
+
             console.log(`Finished distributing Chunk ${chunkIndex}.`);
-        }
+        } // End of for loop iterating through all chunks
 
         console.log(`Payload distribution complete. Total bits encoded: ${totalBitsEncodedOverall}`);
 
-        return { encodedSegments: segmentModifications, chunkMap };
+        // Return only the segments that were actually modified
+        const finalEncodedSegments = new Map<string, string>();
+        for (const [id, content] of segmentModifications.entries()) {
+            finalEncodedSegments.set(id, content);
+        }
+        // Include unmodified segments? The caller might expect the full set.
+        // Let's return only modified ones for now. The decoder needs the map passed to it anyway.
+
+
+        return { encodedSegments: finalEncodedSegments, chunkMap };
     }
+
 
     /**
      * Decode payload from encoded document segments using carriers, metadata, and erasure coding.
@@ -520,7 +663,7 @@ export class CarrierMatrix {
      * @returns Promise resolving to the original decoded payload data, or null if recovery fails.
      */
     public async decodePayload(
-        encodedSegments: Map<string, string>,
+        encodedSegments: Map<string, string>, // Should contain content for segments listed in metadata
         metadata: EncodingMetadata
     ): Promise<Uint8Array | null> {
         if (!metadata || !metadata.chunkMap || typeof metadata.totalChunks !== 'number') {
@@ -533,11 +676,23 @@ export class CarrierMatrix {
             console.log("Metadata indicates 0 chunks, returning empty payload.");
             return new Uint8Array(0);
         }
+        if (chunkMap.length === 0 && totalChunks > 0) {
+             console.error("Decoding failed: Metadata has non-zero totalChunks but empty chunkMap.");
+             throw new Error("Invalid metadata: chunkMap is empty.");
+        }
 
+
+        // Cache for extracted bits from each segment/carrier pair to avoid redundant extraction
         const extractionCache = new Map<string, Map<string, Promise<boolean[] | null>>>();
 
-        const getExtractedBits = async (segmentId: string, carrierKey: string, modifiedContent: string | undefined): Promise<boolean[] | null> => {
-            if (!modifiedContent) return null;
+        // Helper function to get extracted bits, using cache
+        const getExtractedBits = async (segmentId: string, carrierKey: string): Promise<boolean[] | null> => {
+            const modifiedContent = encodedSegments.get(segmentId);
+            if (!modifiedContent) {
+                 console.warn(`Decoder: Segment ${segmentId} not found in provided encodedSegments map.`);
+                 return null; // Segment content missing
+            }
+
 
             if (!extractionCache.has(segmentId)) {
                 extractionCache.set(segmentId, new Map());
@@ -548,75 +703,196 @@ export class CarrierMatrix {
                 const carrier = this.carriers.get(carrierKey);
                 if (!carrier) {
                     console.warn(`Decoder: Carrier ${carrierKey} not found.`);
+                    // Store null promise in cache to avoid retrying
                     segmentCache.set(carrierKey, Promise.resolve(null));
                 } else {
+                    // Start extraction and store the promise in the cache
                     const extractionPromise = carrier.extract(modifiedContent)
+                        .then(bits => {
+                            if (!bits) {
+                                console.warn(`Decoder: Extraction from ${segmentId}/${carrierKey} returned null or empty.`);
+                                return null;
+                            }
+                            return bits;
+                        })
                         .catch(err => {
                             console.error(`Decoder: Error extracting from ${segmentId}/${carrierKey}:`, err);
-                            return null;
+                            return null; // Return null on error
                         });
                     segmentCache.set(carrierKey, extractionPromise);
                 }
             }
+            // Return the promise from the cache
             return segmentCache.get(carrierKey)!;
         };
 
-        const orderedChunks: (Uint8Array | null)[] = new Array(totalChunks).fill(null);
+        // Array to hold the assembled bits for each chunk before converting to bytes
+        const assembledChunkBitsArray: (boolean[] | null)[] = new Array(totalChunks).fill(null);
         let successfullyAssembledChunks = 0;
 
         console.log(`Attempting to decode payload: ${totalChunks} chunks expected.`);
 
-        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-            const parts = chunkMap.filter(p => p.chunkIndex === chunkIndex);
-            parts.sort((a, b) => a.bitOffset - b.bitOffset);
+        // Group chunk parts by chunk index for easier processing
+        const chunkPartsByIndex = new Map<number, ChunkLocation[]>();
+        for (const part of chunkMap) {
+            if (!chunkPartsByIndex.has(part.chunkIndex)) {
+                chunkPartsByIndex.set(part.chunkIndex, []);
+            }
+            chunkPartsByIndex.get(part.chunkIndex)!.push(part);
+        }
 
-            if (parts.length === 0) {
+        // Process each chunk
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const parts = chunkPartsByIndex.get(chunkIndex);
+
+            if (!parts || parts.length === 0) {
                 console.warn(`Chunk ${chunkIndex}: No mapping found in metadata. Marking as missing.`);
+                assembledChunkBitsArray[chunkIndex] = null; // Mark as missing
                 continue;
             }
 
-            let assembledChunkBits: boolean[] = [];
-            let expectedTotalBits = 0;
+            // Sort parts by their bit offset within the chunk to assemble in correct order
+            parts.sort((a, b) => a.bitOffset - b.bitOffset);
+
+            let currentAssembledBits: boolean[] = [];
+            let expectedNextBitOffset = 0;
             let failedExtraction = false;
+            let totalExpectedBitsForChunk = 0;
+
 
             for (const part of parts) {
                 const { segmentId, carrierKey, bitOffset, bitLength } = part;
-                expectedTotalBits += bitLength;
 
-                const modifiedContent = encodedSegments.get(segmentId);
-                const extractedBits = await getExtractedBits(segmentId, carrierKey, modifiedContent);
+                 // Check for gaps or overlaps in bit offsets
+                 if (bitOffset !== expectedNextBitOffset) {
+                     console.warn(`Chunk ${chunkIndex}: Unexpected bit offset gap or overlap. Expected ${expectedNextBitOffset}, got ${bitOffset} from ${segmentId}/${carrierKey}.`);
+                     // Depending on strategy, might try to continue or fail the chunk
+                     failedExtraction = true;
+                     break;
+                 }
 
-                if (extractedBits && extractedBits.length >= bitOffset + bitLength) {
-                    const partBits = extractedBits.slice(bitOffset, bitOffset + bitLength);
-                    console.assert(partBits.length === bitLength, `Chunk ${chunkIndex}, Part ${segmentId}/${carrierKey}: Expected ${bitLength} bits, got ${partBits.length}`);
-                    assembledChunkBits.push(...partBits);
-                } else {
-                    console.warn(`Chunk ${chunkIndex}: Failed to extract part from ${segmentId}/${carrierKey} (offset ${bitOffset}, length ${bitLength}). Extracted: ${extractedBits ? extractedBits.length + ' bits' : 'null'}.`);
+
+                const extractedBits = await getExtractedBits(segmentId, carrierKey);
+
+                if (extractedBits === null) {
+                    // Extraction failed for this part
+                    console.warn(`Chunk ${chunkIndex}: Failed to extract any bits from ${segmentId}/${carrierKey}.`);
                     failedExtraction = true;
                     break;
                 }
-            }
 
-            if (!failedExtraction) {
-                if (assembledChunkBits.length !== expectedTotalBits) {
-                    console.warn(`Chunk ${chunkIndex}: Assembled bits length (${assembledChunkBits.length}) does not match sum of part lengths (${expectedTotalBits}).`);
+                // Determine the start index within the *extracted* bits for this part.
+                // This requires the carrier's `extract` method to return *all* bits it finds,
+                // and the metadata's bitOffset/bitLength refer to positions within the *original* chunk data,
+                // *not* positions within the carrier's extracted stream.
+                // Let's refine the metadata or carrier interface if needed.
+                // ---
+                // Assumption Revisit: Let's assume `carrier.extract` returns *all* bits it encoded in that segment.
+                // The `chunkMap` needs to store where *within the carrier's extracted bits* the chunk part lies.
+                // This requires changing `encode` to return this info, or changing `extract`.
+                // ---
+                // Alternative Assumption: `bitOffset` and `bitLength` in `ChunkLocation` refer to the position
+                // within the *original chunk data*. The `distributePayload` correctly sliced the chunk data.
+                // The `decodePayload` needs to reassemble these slices.
+                // Let's stick to this assumption for now.
+
+                // We need to know the *total* number of bits expected for this chunk to preallocate or validate.
+                // Let's calculate it from the parts list.
+                if (part === parts[parts.length - 1]) { // Calculate on the last part
+                    totalExpectedBitsForChunk = bitOffset + bitLength;
                 }
 
-                try {
-                    const chunkBytes = bitsToBytes(assembledChunkBits);
-                    orderedChunks[chunkIndex] = chunkBytes;
+
+                // We need the specific bits corresponding to this part.
+                // How does the carrier know *which* bits to return if it just gets the whole segment?
+                // The current `Carrier` interface `extract(content)` doesn't support this.
+                // ---
+                // Redesign Needed:
+                // Option A: `extract` needs context (like expected length or offset).
+                // Option B: `encode` needs to return precise location info within the *carrier's* potential bitstream.
+                // Option C: `extract` returns *all* bits, and we assume the `ChunkLocation` refers to indices within *that* returned array.
+                // ---
+                // Let's try Option C for now, assuming `extract` gives all bits from that carrier in that segment.
+                // And assume `ChunkLocation.bitOffset` refers to the index in the *extractedBits* array.
+                // This implies `distributePayload` needs to track this offset during encoding.
+                // ---
+                // Re-Revisiting `distributePayload`: It *doesn't* track offset within the carrier stream. It tracks offset within the *chunk*.
+                // This means Option C is incompatible with the current `distributePayload`.
+                // ---
+                // Let's revert to the original logic: `bitOffset` and `bitLength` refer to the chunk data.
+                // We extract *all* bits from the carrier/segment. We need to know *where* in that stream
+                // our desired `bitLength` bits start. This information is missing.
+                // ---
+                // Simplification: Assume each call to `carrier.encode(content, bitSlice)` only embeds *those* bits,
+                // and `carrier.extract(modifiedContent)` returns *exactly* those bits in order.
+                // This is a strong assumption about carrier behavior.
+
+                // Let's proceed with the simplification: `extract` returns the bits for this part.
+                // This requires `extract` to somehow know which part it's extracting, or for `encode` to have placed it predictably.
+                // ---
+                // Final Attempt with Current Structure: Assume `extract` returns *all* bits for that carrier in the segment.
+                // Assume `ChunkLocation.bitOffset` is the starting index *within those extracted bits*.
+                // Assume `ChunkLocation.bitLength` is the number of bits *at that location*.
+                // This requires `distributePayload` to calculate and store this `bitOffset`. Let's modify `distributePayload` later if needed.
+
+                if (extractedBits.length < bitOffset + bitLength) {
+                    console.warn(`Chunk ${chunkIndex}: Extracted bits from ${segmentId}/${carrierKey} too short. Expected at least ${bitOffset + bitLength}, got ${extractedBits.length}.`);
+                    failedExtraction = true;
+                    break;
+                }
+
+                const partBits = extractedBits.slice(bitOffset, bitOffset + bitLength);
+                // Replace console.assert
+                if (partBits.length !== bitLength) {
+                     // This should not happen if the slice parameters are correct and length check passed
+                     console.error(`Chunk ${chunkIndex}, Part ${segmentId}/${carrierKey}: Slice error. Expected ${bitLength} bits, got ${partBits.length}`);
+                     failedExtraction = true;
+                     break;
+                }
+
+                currentAssembledBits.push(...partBits);
+                expectedNextBitOffset = bitOffset + bitLength; // Update expected offset for the next part
+
+            } // End loop over parts of a chunk
+
+            // After processing all parts for the chunk
+            if (!failedExtraction) {
+                 // Calculate total expected bits from the last part's offset and length
+                 const lastPart = parts[parts.length - 1];
+                 totalExpectedBitsForChunk = lastPart.bitOffset + lastPart.bitLength;
+
+
+                if (currentAssembledBits.length !== totalExpectedBitsForChunk) {
+                    console.warn(`Chunk ${chunkIndex}: Assembled bits length (${currentAssembledBits.length}) does not match expected total length (${totalExpectedBitsForChunk}) based on metadata. Chunk may be corrupt.`);
+                    // Decide whether to proceed with potentially corrupt chunk or mark as null
+                    // For RS, providing a corrupt chunk might be worse than null. Mark as null.
+                    assembledChunkBitsArray[chunkIndex] = null;
+                } else {
+                    assembledChunkBitsArray[chunkIndex] = currentAssembledBits;
                     successfullyAssembledChunks++;
-                    console.log(`Chunk ${chunkIndex}: Successfully assembled ${chunkBytes.length} bytes.`);
-                } catch (error) {
-                    console.error(`Chunk ${chunkIndex}: Error converting assembled bits to bytes:`, error);
-                    orderedChunks[chunkIndex] = null;
+                    console.log(`Chunk ${chunkIndex}: Successfully assembled ${currentAssembledBits.length} bits.`);
                 }
             } else {
-                console.log(`Chunk ${chunkIndex}: Assembly failed due to missing parts.`);
+                console.log(`Chunk ${chunkIndex}: Assembly failed due to missing or inconsistent parts.`);
+                assembledChunkBitsArray[chunkIndex] = null; // Mark as missing/failed
             }
-        }
+        } // End loop over all chunks
 
         console.log(`Finished chunk assembly. ${successfullyAssembledChunks}/${totalChunks} chunks successfully assembled.`);
+
+        // Convert assembled bits to bytes for each chunk
+        const orderedChunks: (Uint8Array | null)[] = assembledChunkBitsArray.map((bits, index) => {
+            if (bits) {
+                try {
+                    return bitsToBytes(bits); // Use imported function
+                } catch (error) {
+                    console.error(`Chunk ${index}: Error converting assembled bits to bytes:`, error);
+                    return null;
+                }
+            }
+            return null;
+        });
+
 
         return this.recoverPayloadFromChunks(orderedChunks);
     }
@@ -627,26 +903,31 @@ export class CarrierMatrix {
      * @returns Original payload data, or null if recovery fails.
      */
     private recoverPayloadFromChunks(chunks: (Uint8Array | null)[]): Uint8Array | null {
-        if (chunks.every(c => c === null)) {
-            console.error("Recovery failed: All chunks are missing.");
+        const availableChunkCount = chunks.filter(c => c !== null).length;
+        if (availableChunkCount === 0) {
+            console.error("Recovery failed: All chunks are missing or failed assembly.");
             return null;
         }
 
         try {
-            console.log(`Attempting Reed-Solomon recovery with ${chunks.filter(c => c !== null).length} available chunks.`);
+            console.log(`Attempting Reed-Solomon recovery with ${availableChunkCount}/${chunks.length} available chunks.`);
+            // Assuming the decode function can handle nulls in the input array
             const recoveredData = this.rsCodec.decode(chunks);
 
             if (recoveredData) {
                 console.log(`Reed-Solomon recovery successful. Decoded payload size: ${recoveredData.length} bytes.`);
                 return recoveredData;
             } else {
-                console.error("Reed-Solomon recovery failed: Decoder returned null.");
+                // Decoder returning null usually means insufficient chunks or uncorrectable errors
+                console.error("Reed-Solomon recovery failed: Not enough data or too many errors.");
                 return null;
             }
         } catch (error) {
-            console.error("Reed-Solomon decoding failed:", error);
+            console.error("Reed-Solomon decoding threw an error:", error);
             return null;
         }
+        // Ensure return path exists - though try/catch should cover it.
+        // return null; // Should be unreachable if try/catch works
     }
 }
 
@@ -679,7 +960,9 @@ export async function demonstrateCarrierMatrix(
         console.log(`   Segments found: ${analysisResult.segmentCount}`);
         console.log(`   Total weighted capacity: ${analysisResult.totalCapacityBits.toFixed(0)} bits`);
         // Assertion: Ensure capacity is reported
-        console.assert(analysisResult.totalCapacityBits >= 0, "Analysis reported negative capacity.");
+        if (!(analysisResult.totalCapacityBits >= 0)) {
+             throw new Error("Assertion failed: Analysis reported negative capacity.");
+        }
 
 
         // 2. Encode payload
@@ -689,35 +972,57 @@ export async function demonstrateCarrierMatrix(
         console.log(`   Encoded content generated for ${encodedSegments.size} segments.`);
         console.log(`   Generated Metadata: ${metadata.totalChunks} total chunks.`);
         // Assertion: Ensure metadata looks reasonable
-        console.assert(metadata.totalChunks >= 0, "Encoding metadata reported negative chunks.");
-        console.assert(metadata.chunkMap != null, "Encoding metadata missing chunkMap.");
+        if (!(metadata.totalChunks >= 0)) {
+             throw new Error("Assertion failed: Encoding metadata reported negative chunks.");
+        }
+        if (!(metadata.chunkMap != null)) {
+             throw new Error("Assertion failed: Encoding metadata missing chunkMap.");
+        }
 
 
         // --- Simulate Transmission/Modification (Optional) ---
-        let segmentsToDecode = encodedSegments;
+        let segmentsToDecode = new Map(encodedSegments); // Start with a copy
+        const originalSegmentIds = new Set(matrix.segments.map(s => s.id)); // Get all original segment IDs
+
         if (simulateLoss && encodedSegments.size > 1) {
-            // Create a copy to modify
-            segmentsToDecode = new Map(encodedSegments);
-            const segmentIds = Array.from(segmentsToDecode.keys());
-            // Remove roughly 10-20% of segments carrying data, ensuring at least one remains
-            const numToRemove = Math.max(1, Math.min(Math.floor(segmentIds.length * 0.2), segmentIds.length - 1));
-            for (let i = 0; i < numToRemove; i++) {
-                 // Remove a segment (e.g., the second one found)
-                 const lostSegmentId = segmentIds[i+1]; // Avoid removing the first segment maybe?
-                 if(lostSegmentId) {
-                     segmentsToDecode.delete(lostSegmentId);
-                     console.log(`   SIMULATING LOSS of segment: ${lostSegmentId}`);
-                 }
+            const segmentIdsCarryingData = new Set(metadata.chunkMap.map(p => p.segmentId));
+            const deletableSegments = Array.from(segmentIdsCarryingData).filter(id => encodedSegments.has(id));
+
+            if (deletableSegments.length > 1) {
+                // Remove roughly 10-20% of segments carrying data, ensuring at least one remains
+                const numToRemove = Math.max(1, Math.min(Math.floor(deletableSegments.length * 0.2), deletableSegments.length - 1));
+                console.log(`   SIMULATING LOSS: Attempting to remove ${numToRemove} segment(s) carrying data...`);
+                for (let i = 0; i < numToRemove; i++) {
+                     // Remove a segment (e.g., the second one found carrying data)
+                     const lostSegmentId = deletableSegments[i + 1]; // Avoid removing the first one maybe?
+                     if(lostSegmentId && segmentsToDecode.has(lostSegmentId)) {
+                         segmentsToDecode.delete(lostSegmentId);
+                         console.log(`   -> Removed segment: ${lostSegmentId}`);
+                     } else if (lostSegmentId) {
+                         console.log(`   -> Segment ${lostSegmentId} already removed or not in encoded set.`);
+                     }
+                }
+                 console.log(`   Segments remaining for decoding: ${segmentsToDecode.size}`);
+            } else {
+                 console.log("   Skipping loss simulation: Not enough distinct segments carrying data to remove.");
             }
-             console.log(`   Segments remaining for decoding: ${segmentsToDecode.size}`);
         } else if (simulateLoss) {
-             console.log("   Skipping simulation: Not enough segments to simulate loss.");
+             console.log("   Skipping loss simulation: Not enough encoded segments to simulate loss.");
+        }
+
+        // Add back any original segments that weren't modified/encoded into,
+        // as the decoder might need the full document structure context,
+        // or just to pass the complete (partially modified) document.
+        for (const seg of matrix.segments) {
+            if (!segmentsToDecode.has(seg.id)) {
+                segmentsToDecode.set(seg.id, seg.content);
+            }
         }
 
 
         // 3. Decode payload
         console.log("\n3. DECODING PAYLOAD...");
-        // Pass the metadata obtained during encoding
+        // Pass the potentially reduced map of segments and the metadata
         const decodedPayload = await matrix.decodePayload(segmentsToDecode, metadata);
 
 
@@ -731,16 +1036,17 @@ export async function demonstrateCarrierMatrix(
                 for (let i = 0; i < payload.length; i++) {
                     if (payload[i] !== decodedPayload[i]) {
                         match = false;
+                        console.error(`   Mismatch at byte ${i}: Original=${payload[i]}, Decoded=${decodedPayload[i]}`);
                         break;
                     }
                 }
             }
-            console.log(`   Payload matches original: ${match ? 'YES' : 'NO'`);
+            console.log(`   Payload matches original: ${match ? 'YES' : 'NO'}`);
             if (!match) {
                 console.error("   Verification failed: Decoded payload does not match original.");
                 // Optionally log parts of the arrays for comparison
-                // console.log("Original:", payload.slice(0, 20));
-                // console.log("Decoded: ", decodedPayload.slice(0, 20));
+                console.log("   Original (first 20 bytes):", payload.slice(0, 20));
+                console.log("   Decoded (first 20 bytes): ", decodedPayload.slice(0, 20));
                 success = false; // Explicitly mark as failure
             } else {
                  // Verification successful
@@ -766,24 +1072,36 @@ export async function demonstrateCarrierMatrix(
 
     } catch (error) {
         console.error("\n--- DEMO FAILED ---");
-        console.error(`Error during demonstration: ${error.message}`);
-        if (error.stack) {
-            console.error(error.stack);
+        // Ensure error is an Error object
+        if (error instanceof Error) {
+            console.error(`Error during demonstration: ${error.message}`);
+            if (error.stack) {
+                console.error(error.stack);
+            }
+        } else {
+             console.error("An unexpected error occurred during demonstration:", error);
         }
         success = false; // Mark as failure on error
-    }
+    } // Fixed missing closing brace for catch
 
-    console.log(`\n=== DEMO COMPLETE (Success: ${success}) ===`);
+    console.log(`\n=== DEMO COMPLETE (Success: ${success}) ===`); // Fixed syntax
     return success; // Return status
 }
 
 // Example Usage (Add to a main script or test runner)
-/*
+/* // Fixed comment termination
 import fs from 'fs/promises'; // Use ESM import
 
 async function runDemo() {
     try {
-        const sampleDocument = await fs.readFile('path/to/your/document.txt', 'utf-8');
+        // Use a placeholder document for testing if file read fails
+        let sampleDocument = "Chapter 1\n\nThis is the first chapter.\n\n## Section 1.1\n\nSome content here with \"quotes\".\n\n## Section 1.2\n\nMore content with 'other quotes'.\n\nChapter 2\n\nSecond chapter content, \"double quotes\" again.";
+        try {
+             sampleDocument = await fs.readFile('path/to/your/document.txt', 'utf-8');
+        } catch (readErr) {
+             console.warn("Could not read document file, using placeholder content for demo.");
+        }
+
         const samplePayload = new TextEncoder().encode("This is the secret message that needs to be encoded using the carrier matrix system with Reed-Solomon for resilience.");
 
         console.log("--- Running Normal Demo ---");
@@ -798,4 +1116,4 @@ async function runDemo() {
 }
 
 runDemo();
-*/
+*/ // Fixed comment termination

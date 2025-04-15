@@ -1,25 +1,34 @@
 /**
  * Stylometric Carrier - Information Embedding Using Stylometric Features
- * 
+ *
  * This module inverts the stylometric detection techniques identified by Kumarage et al. (2023)
  * to create steganographic carriers within text. It exploits stylometric features that typically
  * differentiate human from AI text to instead carry embedded information.
- * 
+ *
+ * Design Goals: Implement functional apply/extract methods for various stylometric techniques.
+ * Constraints: Relies on 'compromise' for NLP. Naturalness is secondary to functionality for now. See stylometric_carrier.ApiNotes.md.
+ * Paradigm: Functional analysis, Imperative text manipulation.
+ *
  * Flow:
- * 1. Analyze text to determine carrying capacity
- * 2. Process payload to distribute across available carriers 
- * 3. Apply modifications to embed payload in text
- * 4. Verify modified text remains natural and detection-resistant
- * 
- * Happy path: analyzeCarryingCapacity → encodePayload → extractPayload
+ * 1. Analyze text to determine carrying capacity (`analyzeCarryingCapacity` calls `estimate` for each technique).
+ * 2. Process payload to distribute across available carriers (`encodePayload` selects and calls `apply`).
+ * 3. Apply modifications to embed payload in text (`apply` methods perform changes).
+ * 4. Extract payload by reversing the analysis (`extractPayload` calls `extract`).
+ *
+ * Happy path: analyzeCarryingCapacity -> encodePayload -> extractPayload
  */
 
-import { StyleFeatureExtractor, type FeatureMap } from './stylometric_detection.genai.mjs';
+// @ts-ignore - compromise types might not be perfectly aligned
 import * as nlp from 'compromise';
+// @ts-ignore - compromise plugin types might not be perfectly aligned
+import compromiseSentences from 'compromise/plugins/sentences';
+// @ts-ignore - compromise plugin types might not be perfectly aligned
+import compromiseNumbers from 'compromise/plugins/numbers';
+// Apply plugins
+nlp.plugin(compromiseSentences);
+nlp.plugin(compromiseNumbers);
 
-/**
- * Interface for carrier analysis results
- */
+// --- Interfaces (keep as is) ---
 export interface CarrierAnalysis {
     totalCapacityBits: number;
     carrierDistribution: {
@@ -28,59 +37,85 @@ export interface CarrierAnalysis {
         linguistic: number;
         readability: number;
     };
-    safeModificationRanges: FeatureMap;
+    safeModificationRanges: FeatureMap; // Define FeatureMap if not imported
     recommendedMaxPayloadBytes: number;
 }
 
-/**
- * Interface for encoding options
- */
+// Define FeatureMap if not importing from detection
+export interface FeatureMap {
+    [key: string]: number;
+}
+
 export interface EncodingOptions {
     usePhraseologyCarriers?: boolean;
     usePunctuationCarriers?: boolean;
     useLinguisticCarriers?: boolean;
     useReadabilityCarriers?: boolean;
-    errorCorrection?: boolean;
+    errorCorrection?: boolean; // Note: Error correction happens *before* calling encodePayload
     preserveReadingLevel?: boolean;
     preserveLinguisticFingerprint?: boolean;
     preserveKeyFeatures?: string[];
     maxDetectionRisk?: number; // 0-1 scale
 }
 
-/**
- * Interface for an individual carrier technique
- */
 export interface CarrierTechnique {
     id: string;
     name: string;
     category: 'phraseology' | 'punctuation' | 'linguistic' | 'readability';
-    bitsPerThousandWords: number;
+    bitsPerThousandWords: number; // Approximate guide
     apply: (text: string, bits: boolean[]) => { modifiedText: string; bitsEncoded: number };
     extract: (text: string) => boolean[];
-    estimate: (text: string) => number;
-    detectability: number; // 0-1 scale
+    estimate: (text: string) => number; // Estimate capacity in bits
+    detectability: number; // 0-1 scale, lower is better
 }
+// --- End Interfaces ---
+
+// Basic synonym map for substitution carrier
+const synonymMap: Record<string, { lowFreq: string, highFreq: string }> = {
+    'use': { lowFreq: 'utilize', highFreq: 'use' },
+    'help': { lowFreq: 'assist', highFreq: 'help' },
+    'show': { lowFreq: 'demonstrate', highFreq: 'show' },
+    'start': { lowFreq: 'commence', highFreq: 'start' },
+    'end': { lowFreq: 'terminate', highFreq: 'end' },
+    'big': { lowFreq: 'substantial', highFreq: 'big' },
+    'small': { lowFreq: 'minuscule', highFreq: 'small' },
+    'fast': { lowFreq: 'rapid', highFreq: 'fast' },
+    'important': { lowFreq: 'crucial', highFreq: 'important' },
+    'good': { lowFreq: 'beneficial', highFreq: 'good' },
+};
 
 /**
- * StylometricCarrier enables embedding information in text using stylometric features
- * identified in the Kumarage et al. (2023) research.
+ * StylometricCarrier enables embedding information in text using stylometric features.
+ * Design Goals: Provide various techniques (carriers) to encode/decode boolean data
+ *               into text by subtly altering stylistic features like punctuation,
+ *               sentence structure, word choice, etc. Each carrier should estimate
+ *               its capacity and apply/extract bits.
+ * Architectural Constraints: Uses 'compromise' NLP library for text analysis.
+ *                          Carrier implementations should be self-contained functions.
+ *                          Focus on reversibility and minimizing semantic distortion.
+ * Happy Path:
+ * 1. Instantiate StylometricCarrier.
+ * 2. Analyze text capacity using analyzeCarryingCapacity().
+ * 3. Encode data using encodeData().
+ * 4. Transmit/store modified text.
+ * 5. Decode data using decodeData().
+ * ApiNotes: ./stylometric_carrier.ApiNotes.md (Assumed)
  */
 export class StylometricCarrier {
-    private featureExtractor: StyleFeatureExtractor;
     private carriers: CarrierTechnique[];
-    
+
     /**
      * Initialize the stylometric carrier
      */
     constructor() {
-        this.featureExtractor = new StyleFeatureExtractor();
         this.carriers = this.initializeCarriers();
     }
-    
+
     /**
      * Initialize all available carrier techniques
      */
     private initializeCarriers(): CarrierTechnique[] {
+        // Reference: ./stylometric_carrier.ApiNotes.md#Initialization
         return [
             this.createSentenceLengthCarrier(),
             this.createParagraphStructureCarrier(),
@@ -88,23 +123,23 @@ export class StylometricCarrier {
             this.createQuoteStyleCarrier(),
             this.createOptionalCommaCarrier(),
             this.createSynonymSubstitutionCarrier(),
-            this.createLexicalRichnessCarrier(),
             this.createFunctionWordCarrier(),
-            this.createSyllableCountCarrier(),
-            this.createVoiceStyleCarrier()
+            this.createVoiceStyleCarrier(), // Note: Experimental
+            this.createRhymingSynonymCarrier(), // New
+            this.createDescriptionDetailCarrier(), // New
+            this.createCounterpointPhraseCarrier(), // New
         ];
     }
-    
+
     /**
      * Analyze carrying capacity of text for embedding information
-     * 
+     *
      * @param text Text to analyze
      * @returns Analysis of carrying capacity
      */
     analyzeCarryingCapacity(text: string): CarrierAnalysis {
-        const features = this.featureExtractor.extractAllFeatures(text);
-        const wordCount = features.word_count || 0;
-        
+        const wordCount = (text.match(/\b\w+\b/g) || []).length;
+
         // Calculate baseline capacity for each carrier
         const carrierEstimates = this.carriers.map(carrier => ({
             id: carrier.id,
@@ -112,22 +147,22 @@ export class StylometricCarrier {
             bitCapacity: carrier.estimate(text),
             detectability: carrier.detectability
         }));
-        
+
         // Group by category and sum capacities
         const phraseologyBits = this.sumCarrierBits(carrierEstimates, 'phraseology');
         const punctuationBits = this.sumCarrierBits(carrierEstimates, 'punctuation');
         const linguisticBits = this.sumCarrierBits(carrierEstimates, 'linguistic');
         const readabilityBits = this.sumCarrierBits(carrierEstimates, 'readability');
-        
+
         // Total capacity
         const totalBits = phraseologyBits + punctuationBits + linguisticBits + readabilityBits;
-        
-        // Calculate safe modification ranges
-        const safeModificationRanges = this.calculateSafeModificationRanges(features);
-        
-        // Max payload with some error correction overhead
-        const maxPayloadBytes = Math.floor((totalBits * 0.75) / 8);
-        
+
+        // Calculate safe modification ranges (Placeholder - requires feature extractor and thresholds)
+        const safeModificationRanges = this.calculateSafeModificationRanges();
+
+        // Max payload assuming ~25% overhead for robustness/naturalness/metadata
+        const recommendedMaxPayloadBytes = Math.floor((totalBits * 0.75) / 8);
+
         return {
             totalCapacityBits: totalBits,
             carrierDistribution: {
@@ -137,135 +172,148 @@ export class StylometricCarrier {
                 readability: readabilityBits
             },
             safeModificationRanges,
-            recommendedMaxPayloadBytes: maxPayloadBytes
+            recommendedMaxPayloadBytes: Math.max(0, recommendedMaxPayloadBytes) // Ensure non-negative
         };
     }
-    
+
     /**
      * Sum bits capacity by carrier category
      */
     private sumCarrierBits(
-        estimates: Array<{id: string; category: string; bitCapacity: number; detectability: number}>,
+        estimates: Array<{ id: string; category: string; bitCapacity: number; detectability: number }>,
         category: string
     ): number {
         return estimates
             .filter(e => e.category === category)
             .reduce((sum, e) => sum + e.bitCapacity, 0);
     }
-    
+
     /**
      * Calculate safe ranges for modifying features without triggering detection
+     * Placeholder: Requires actual feature extraction and defined thresholds.
      */
-    private calculateSafeModificationRanges(features: FeatureMap): FeatureMap {
-        const ranges: FeatureMap = {};
-        
-        // For each feature, determine a safe min/max range for modifications
-        // These values are based on the research paper's identified thresholds
-        
-        // Lexical richness (MATTR) range
-        const lexicalRichness = features.lexical_richness || 0.7;
-        ranges.lexical_richness_min = Math.max(0.5, lexicalRichness - 0.08);
-        ranges.lexical_richness_max = Math.min(0.9, lexicalRichness + 0.08);
-        
-        // Readability score range
-        const readability = features.readability || 60;
-        ranges.readability_min = Math.max(30, readability - 10);
-        ranges.readability_max = Math.min(90, readability + 10);
-        
-        // Words per sentence range
-        const meanWordsPerSentence = features.mean_words_per_sentence || 15;
-        ranges.mean_words_per_sentence_min = Math.max(8, meanWordsPerSentence - 4);
-        ranges.mean_words_per_sentence_max = Math.min(25, meanWordsPerSentence + 4);
-        
-        // Sentence variance range
-        const stdevWordsPerSentence = features.stdev_words_per_sentence || 5;
-        ranges.stdev_words_per_sentence_min = Math.max(2, stdevWordsPerSentence - 2);
-        ranges.stdev_words_per_sentence_max = Math.min(12, stdevWordsPerSentence + 2);
-        
-        return ranges;
+    private calculateSafeModificationRanges(): FeatureMap {
+        console.warn("StylometricCarrier: calculateSafeModificationRanges is a placeholder.");
+        return {};
     }
-    
+
     /**
      * Encode payload into text using stylometric features as carriers
-     * 
+     *
      * @param text Original text to use as carrier
-     * @param payload Binary data to encode
+     * @param payload Binary data to encode (assumed to be already erasure-coded if needed)
      * @param options Encoding options
      * @returns Modified text with embedded payload
      */
     encodePayload(text: string, payload: Uint8Array, options: EncodingOptions = {}): string {
-        // Analyze the carrying capacity
         const analysis = this.analyzeCarryingCapacity(text);
-        
-        // Check if payload will fit
         const payloadBits = payload.length * 8;
-        if (payloadBits > analysis.totalCapacityBits) {
-            throw new Error(`Payload too large: ${payload.length} bytes exceeds capacity of ${Math.floor(analysis.totalCapacityBits / 8)} bytes`);
-        }
-        
-        // Convert payload to bit array
-        const bits = this.bytesToBits(payload);
-        
-        // Clone original text as starting point
-        let modifiedText = text;
-        let bitsRemaining = [...bits]; // Clone the bits array
-        
-        // Apply carriers according to options and priority
+
         const activeCarriers = this.getActiveCarriers(options);
-        
-        // Sort carriers by detectability (least detectable first)
+        const estimatedUsableBits = activeCarriers.reduce((sum, c) => sum + c.estimate(text), 0);
+
+        // Adjust warning threshold, allow slightly over estimation
+        if (payloadBits > estimatedUsableBits * 1.2) {
+            console.warn(`Payload size (${payloadBits} bits) significantly exceeds estimated capacity (${estimatedUsableBits} bits). Encoding likely to fail or be incomplete.`);
+        } else if (payloadBits > estimatedUsableBits) {
+            console.warn(`Payload size (${payloadBits} bits) exceeds estimated capacity (${estimatedUsableBits} bits). Encoding may be incomplete.`);
+        }
+
+        if (payloadBits === 0) {
+            console.warn("Payload is empty, returning original text.");
+            return text;
+        }
+        if (activeCarriers.length === 0) {
+            console.error("No active carriers selected or available based on options. Cannot encode.");
+            return text; // Return original text if no carriers
+        }
+
+        const bits = this.bytesToBits(payload);
+        let modifiedText = text;
+        let bitsRemaining = [...bits];
+        let totalBitsEncoded = 0;
+
+        // Sort carriers by detectability (lower first)
         activeCarriers.sort((a, b) => a.detectability - b.detectability);
-        
-        // Apply each carrier until all bits are encoded
+
         for (const carrier of activeCarriers) {
             if (bitsRemaining.length === 0) break;
-            
-            // Apply this carrier technique
-            const result = carrier.apply(modifiedText, bitsRemaining);
-            modifiedText = result.modifiedText;
-            
-            // Remove encoded bits from remaining
-            bitsRemaining = bitsRemaining.slice(result.bitsEncoded);
+
+            try {
+                // Pass only the bits that still need encoding
+                const result = carrier.apply(modifiedText, bitsRemaining);
+                if (result.modifiedText && typeof result.bitsEncoded === 'number' && result.bitsEncoded >= 0) {
+                    modifiedText = result.modifiedText;
+                    // Ensure we don't process more bits than were actually encoded by the carrier OR remaining
+                    const encodedCount = Math.min(result.bitsEncoded, bitsRemaining.length);
+                    if (encodedCount > 0) {
+                        bitsRemaining = bitsRemaining.slice(encodedCount);
+                        totalBitsEncoded += encodedCount;
+                        console.log(`Carrier ${carrier.id} encoded ${encodedCount} bits. ${bitsRemaining.length} bits remaining.`);
+                    } else if (result.modifiedText !== text) {
+                        console.warn(`Carrier ${carrier.id} modified text but reported 0 bits encoded.`);
+                    }
+                } else {
+                    console.warn(`Carrier ${carrier.id} returned invalid result (modifiedText: ${!!result.modifiedText}, bitsEncoded: ${result.bitsEncoded}). Skipping.`);
+                }
+            } catch (error) {
+                if (error instanceof Error) {
+                    console.warn(`Error applying carrier ${carrier.id}: ${error.message}. Skipping.`);
+                } else {
+                    console.warn(`Unknown error applying carrier ${carrier.id}. Skipping.`);
+                }
+            }
         }
-        
-        // If bits remain, we couldn't encode everything
+
         if (bitsRemaining.length > 0) {
-            throw new Error(`Could not encode entire payload: ${bitsRemaining.length} bits remain`);
+            console.warn(`Could not encode entire payload: ${bitsRemaining.length} bits remain out of ${payloadBits}. Only ${totalBitsEncoded} bits were encoded.`);
+        } else {
+            console.log(`Successfully encoded ${totalBitsEncoded} bits.`);
         }
-        
-        // Verify the text still looks natural
-        this.verifyNaturalText(text, modifiedText, options);
-        
+
         return modifiedText;
     }
-    
+
     /**
      * Extract payload from text that was embedded using stylometric carriers
-     * 
+     *
      * @param text Text with embedded payload
      * @param options Extraction options (should match encoding options)
-     * @returns Extracted payload
+     * @returns Extracted payload (may be incomplete if encoding failed or text was altered)
      */
     extractPayload(text: string, options: EncodingOptions = {}): Uint8Array {
-        // Get active carriers (must match encoding options)
         const activeCarriers = this.getActiveCarriers(options);
-        
-        // Sort carriers in the same order as encoding
+        // Ensure extraction order matches encoding order (by detectability)
         activeCarriers.sort((a, b) => a.detectability - b.detectability);
-        
-        // Extract bits from each carrier
+
         const extractedBits: boolean[] = [];
+        // let expectedBits = -1; // This seems unused
+
         for (const carrier of activeCarriers) {
-            const bits = carrier.extract(text);
-            extractedBits.push(...bits);
+            try {
+                const bits = carrier.extract(text);
+                if (Array.isArray(bits)) {
+                    // Assume each carrier extracts only the bits it encoded
+                    extractedBits.push(...bits);
+                    console.log(`Carrier ${carrier.id} extracted ${bits.length} bits.`);
+                } else {
+                    console.warn(`Carrier ${carrier.id} returned invalid extraction result (not an array). Skipping.`);
+                }
+            } catch (error) {
+                if (error instanceof Error) {
+                    console.warn(`Error extracting from carrier ${carrier.id}: ${error.message}. Skipping.`);
+                } else {
+                    console.warn(`Unknown error extracting from carrier ${carrier.id}. Skipping.`);
+                }
+            }
         }
-        
-        // Convert bits back to bytes
+
+        console.log(`Total extracted bits: ${extractedBits.length}`);
         const payload = this.bitsToBytes(extractedBits);
-        
+
         return payload;
     }
-    
+
     /**
      * Get active carriers based on options
      */
@@ -275,520 +323,633 @@ export class StylometricCarrier {
             usePunctuationCarriers = true,
             useLinguisticCarriers = true,
             useReadabilityCarriers = true,
-            maxDetectionRisk = 0.5
+            maxDetectionRisk = 0.6 // Default max risk
         } = options;
-        
+
         return this.carriers.filter(carrier => {
-            // Filter by detection risk
             if (carrier.detectability > maxDetectionRisk) {
+                console.log(`Carrier ${carrier.id} skipped (detectability ${carrier.detectability} > max ${maxDetectionRisk})`);
                 return false;
             }
-            
-            // Filter by category
             switch (carrier.category) {
-                case 'phraseology':
-                    return usePhraseologyCarriers;
-                case 'punctuation':
-                    return usePunctuationCarriers;
-                case 'linguistic':
-                    return useLinguisticCarriers;
-                case 'readability':
-                    return useReadabilityCarriers;
+                case 'phraseology': return usePhraseologyCarriers;
+                case 'punctuation': return usePunctuationCarriers;
+                case 'linguistic': return useLinguisticCarriers;
+                case 'readability': return useReadabilityCarriers;
                 default:
+                    console.warn(`Carrier ${carrier.id} has unknown category: ${carrier.category}`);
                     return false;
             }
         });
     }
-    
+
     /**
-     * Verify the modified text still looks natural
-     */
-    private verifyNaturalText(original: string, modified: string, options: EncodingOptions): void {
-        // Extract features from both texts
-        const originalFeatures = this.featureExtractor.extractAllFeatures(original);
-        const modifiedFeatures = this.featureExtractor.extractAllFeatures(modified);
-        
-        // If preserveReadingLevel is enabled, check readability score
-        if (options.preserveReadingLevel) {
-            const readabilityDiff = Math.abs(
-                (modifiedFeatures.readability || 0) - 
-                (originalFeatures.readability || 0)
-            );
-            
-            if (readabilityDiff > 10) {
-                throw new Error(`Modified text readability differs too much: ${readabilityDiff} points`);
-            }
-        }
-        
-        // If preserveLinguisticFingerprint is enabled, check key linguistic features
-        if (options.preserveLinguisticFingerprint) {
-            const lexicalDiff = Math.abs(
-                (modifiedFeatures.lexical_richness || 0) - 
-                (originalFeatures.lexical_richness || 0)
-            );
-            
-            if (lexicalDiff > 0.1) {
-                throw new Error(`Modified text linguistic fingerprint differs too much: ${lexicalDiff} MATTR difference`);
-            }
-        }
-        
-        // Check preserved key features
-        if (options.preserveKeyFeatures) {
-            for (const feature of options.preserveKeyFeatures) {
-                if (feature in originalFeatures && feature in modifiedFeatures) {
-                    const diff = Math.abs(originalFeatures[feature] - modifiedFeatures[feature]);
-                    const threshold = originalFeatures[feature] * 0.15; // 15% difference tolerance
-                    
-                    if (diff > threshold) {
-                        throw new Error(`Modified text key feature '${feature}' differs too much: ${diff}`);
-                    }
-                }
-            }
-        }
-    }
-    
-    /**
-     * Convert bytes to bits array
+     * Convert bytes to bits array (Least Significant Bit first in array)
      */
     private bytesToBits(bytes: Uint8Array): boolean[] {
         const bits: boolean[] = [];
-        for (let i = 0; i < bytes.length; i++) {
-            const byte = bytes[i];
-            for (let j = 7; j >= 0; j--) {
-                bits.push(((byte >> j) & 1) === 1);
+        bytes.forEach(byte => {
+            for (let j = 0; j < 8; j++) {
+                // LSB first: ((byte >> j) & 1) === 1
+                // MSB first: ((byte >> (7 - j)) & 1) === 1
+                bits.push(((byte >> j) & 1) === 1); // Keep LSB first as originally implemented
             }
-        }
+        });
         return bits;
     }
-    
+
     /**
-     * Convert bits array to bytes
+     * Convert bits array to bytes (Assumes LSB first in array)
      */
     private bitsToBytes(bits: boolean[]): Uint8Array {
-        // Ensure the bit count is a multiple of 8
-        const padding = (8 - (bits.length % 8)) % 8;
-        const paddedBits = [...bits];
-        for (let i = 0; i < padding; i++) {
-            paddedBits.push(false);
-        }
-        
-        // Convert bits to bytes
-        const bytes = new Uint8Array(paddedBits.length / 8);
-        for (let i = 0; i < paddedBits.length; i += 8) {
+        const byteCount = Math.ceil(bits.length / 8);
+        const bytes = new Uint8Array(byteCount);
+        for (let i = 0; i < byteCount; i++) {
             let byte = 0;
             for (let j = 0; j < 8; j++) {
-                if (paddedBits[i + j]) {
-                    byte |= 1 << (7 - j);
+                const bitIndex = i * 8 + j;
+                if (bitIndex < bits.length && bits[bitIndex]) {
+                    // LSB first: byte |= (1 << j);
+                    // MSB first: byte |= (1 << (7 - j));
+                    byte |= (1 << j); // Keep LSB first
                 }
             }
-            bytes[i / 8] = byte;
+            bytes[i] = byte;
         }
-        
         return bytes;
     }
-    
+
     /*** CARRIER TECHNIQUE IMPLEMENTATIONS ***/
-    
+
     /**
-     * Sentence length pattern carrier
-     * Encodes bits by varying sentence length within natural ranges
+     * Sentence length pattern carrier (Example Implementation)
+     * Encodes bits by adding/removing low-impact adverbs like 'truly', 'really'.
+     * This is a simplified example and may not be robust or natural.
      */
     private createSentenceLengthCarrier(): CarrierTechnique {
+        const id = 'sentence_length_adverb'; // More specific ID
+        const bitsPerThousandWords = 5; // Rough estimate
+        const detectability = 0.4; // Moderate detectability
+
         return {
-            id: 'sentence_length',
-            name: 'Sentence Length Pattern',
-            category: 'phraseology',
-            bitsPerThousandWords: 8,
-            detectability: 0.3,
-            
+            id, name: 'Sentence Adverb Marker', category: 'phraseology',
+            bitsPerThousandWords, detectability,
+
             estimate: (text: string) => {
-                const wordCount = text.split(/\s+/).length;
-                return Math.floor((wordCount / 1000) * this.bitsPerThousandWords);
-            },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Implementation would modify sentence lengths to encode bits
-                // This is a simplified placeholder for the concept
-                const doc = nlp(text);
-                const sentences = doc.sentences().out('array');
-                
-                // Determine how many bits we can encode
-                const maxBits = Math.min(bits.length, Math.floor(sentences.length / 2));
-                
-                // For each bit, modify adjacent sentence pairs
-                let modifiedText = text;
-                for (let i = 0; i < maxBits; i++) {
-                    // This is where actual sentence length modifications would happen
-                    // For each bit, we'd adjust the relative lengths of adjacent sentences
+                try {
+                    // Estimate capacity based on number of sentences where modification is possible
+                    const doc = nlp(text);
+                    const sentences = doc.sentences().out('array');
+                    // Capacity: roughly one bit per sentence (can add or potentially remove marker)
+                    return Math.max(0, sentences.length - 1); // Avoid modifying first sentence maybe?
+                } catch (e) {
+                    console.warn(`[${id}] Estimate error: ${e instanceof Error ? e.message : e}`);
+                    return 0;
                 }
-                
-                return { modifiedText, bitsEncoded: maxBits };
             },
-            
+
+            apply: (text: string, bits: boolean[]) => {
+                let modifiedText = text;
+                let bitsEncoded = 0;
+                try {
+                    const doc = nlp(modifiedText);
+                    const sentences = doc.sentences();
+                    const sentenceTexts = sentences.out('array');
+                    const numSentences = sentenceTexts.length;
+                    let currentBitIndex = 0;
+
+                    if (numSentences < 1 || bits.length === 0) {
+                        return { modifiedText, bitsEncoded: 0 };
+                    }
+
+                    const modifiedSentences = [...sentenceTexts];
+                    const markerAdverb = ' truly'; // Adverb used as marker (space included)
+                    const markerRegex = /\s+(truly|really|actually|just)\b/i; // Regex to find markers
+
+                    // Iterate through sentences (start from 0 or 1?) to apply bits
+                    for (let i = 0; i < numSentences && currentBitIndex < bits.length; i++) {
+                        const currentSentence = modifiedSentences[i];
+                        const bit = bits[currentBitIndex];
+                        let modifiedCurrent = currentSentence;
+                        let appliedModification = false;
+
+                        if (bit) { // Encode 1: Ensure marker is present
+                            if (!markerRegex.test(currentSentence)) {
+                                // Add marker after the first word (simple approach)
+                                modifiedCurrent = currentSentence.replace(/^(\s*\w+)/, `$1${markerAdverb}`);
+                                if (modifiedCurrent !== currentSentence) {
+                                    appliedModification = true;
+                                }
+                            } else {
+                                // Marker already present, bit '1' is represented. No change needed.
+                                // We should still count this as encoding the bit.
+                                appliedModification = true; // Represents the bit '1' state
+                            }
+                        } else { // Encode 0: Ensure marker is absent
+                            const match = currentSentence.match(markerRegex);
+                            if (match) {
+                                // Remove the first found marker
+                                modifiedCurrent = currentSentence.replace(markerRegex, '');
+                                if (modifiedCurrent !== currentSentence) {
+                                    appliedModification = true;
+                                }
+                            } else {
+                                // Marker already absent, bit '0' is represented. No change needed.
+                                appliedModification = true; // Represents the bit '0' state
+                            }
+                        }
+
+                        // If a conceptual modification occurred (state matches bit), count bit and update text
+                        if (appliedModification) {
+                            modifiedSentences[i] = modifiedCurrent; // Update sentence text even if no change needed
+                            bitsEncoded++;
+                            currentBitIndex++;
+                        } else {
+                            // Could not apply the bit (e.g., adding marker failed?)
+                            // Skip this sentence for encoding? Or log warning?
+                            console.warn(`[${id}] Could not apply bit ${bit} to sentence ${i}. Skipping.`);
+                        }
+                    }
+                    // Reconstruct the text from modified sentences
+                    // This simple join might lose original spacing between sentences.
+                    // A more robust approach would use sentence start/end indices.
+                    modifiedText = modifiedSentences.join(' '); // Simple join
+
+                } catch (error) {
+                    console.warn(`[${id}] Apply error: ${error instanceof Error ? error.message : error}`);
+                    // Return potentially partially modified text and bits encoded so far
+                    return { modifiedText, bitsEncoded };
+                }
+                return { modifiedText, bitsEncoded };
+            },
+
             extract: (text: string) => {
-                // Extract bits from sentence length patterns
                 const extractedBits: boolean[] = [];
-                // Implementation would analyze sentence lengths to extract encoded bits
+                try {
+                    const doc = nlp(text);
+                    const sentences = doc.sentences().out('array');
+                    const numSentences = sentences.length;
+                    const markerRegex = /\s+(truly|really|actually|just)\b/i; // Use same regex as apply
+
+                    if (numSentences < 1) return [];
+
+                    // Extract bit from each sentence based on marker presence
+                    for (let i = 0; i < numSentences; i++) {
+                        const currentSentence = sentences[i];
+                        const hasMarker = markerRegex.test(currentSentence);
+                        extractedBits.push(hasMarker); // true (1) if marker present, false (0) otherwise
+                    }
+                } catch (error) {
+                    console.warn(`[${id}] Extract error: ${error instanceof Error ? error.message : error}`);
+                }
+                // Return all extracted bits; decoder needs to know how many were originally encoded.
                 return extractedBits;
             }
         };
     }
-    
+
     /**
-     * Paragraph structure carrier
-     * Encodes bits in paragraph lengths and structures
+     * Rhyming Synonym Carrier
+     * Encodes bits by swapping between a word and a rhyming synonym.
+     * Note: Relies on a predefined map and simple rhyme checking. Highly experimental.
+     * Reference: ./stylometric_carrier.ApiNotes.md#RhymingSynonym
+     * [paradigm:imperative]
      */
-    private createParagraphStructureCarrier(): CarrierTechnique {
-        return {
-            id: 'paragraph_structure',
-            name: 'Paragraph Structure',
-            category: 'phraseology',
-            bitsPerThousandWords: 5,
-            detectability: 0.35,
-            
-            estimate: (text: string) => {
-                const wordCount = text.split(/\s+/).length;
-                const paragraphs = text.split(/\n\s*\n/).length;
-                
-                // More accurate estimation based on paragraph count
-                const estimatedBits = Math.floor(Math.min(
-                    paragraphs / 3, // Approximately 1 bit per 3 paragraphs
-                    (wordCount / 1000) * this.bitsPerThousandWords
-                ));
-                
-                return estimatedBits;
-            },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Implementation would modify paragraph structures to encode bits
-                // This is a simplified placeholder
-                const paragraphs = text.split(/\n\s*\n/);
-                const maxBits = Math.min(bits.length, Math.floor(paragraphs.length / 3));
-                
-                return { modifiedText: text, bitsEncoded: maxBits };
-            },
-            
-            extract: (text: string) => {
-                // Extract bits from paragraph structures
-                return [];
-            }
+    private createRhymingSynonymCarrier(): CarrierTechnique {
+        const id = 'rhyming_synonym';
+        const bitsPerThousandWords = 3; // Low capacity, depends heavily on map
+        const detectability = 0.7; // Potentially high detectability if rhymes are forced/unnatural
+
+        // Simple map of words to potential rhyming synonyms.
+        // Bit 1 = use rhyme, Bit 0 = use original/non-rhyme
+        // This map needs to be carefully curated for naturalness.
+        const rhymeSwapMap: Record<string, { original: string, rhyme: string }> = {
+            'fast': { original: 'fast', rhyme: 'vast' }, // Example pair
+            'quick': { original: 'quick', rhyme: 'slick' }, // Example pair
+            'big': { original: 'big', rhyme: 'dig' }, // May change meaning significantly
+            'large': { original: 'large', rhyme: 'charge' }, // May change meaning
+            'happy': { original: 'happy', rhyme: 'sappy' }, // Changes connotation
+            'sad': { original: 'sad', rhyme: 'mad' } // Changes connotation
         };
-    }
-    
-    /**
-     * Punctuation frequency carrier
-     * Encodes bits by adjusting frequencies of specific punctuation marks
-     */
-    private createPunctuationFrequencyCarrier(): CarrierTechnique {
+        // Create reverse lookup for extraction
+        const reverseRhymeMap: Record<string, { original: string, isRhyme: boolean }> = {};
+        for (const key in rhymeSwapMap) {
+            const pair = rhymeSwapMap[key];
+            reverseRhymeMap[pair.original] = { original: pair.original, isRhyme: false };
+            reverseRhymeMap[pair.rhyme] = { original: pair.original, isRhyme: true };
+        }
+
         return {
-            id: 'punctuation_frequency',
-            name: 'Punctuation Frequency',
-            category: 'punctuation',
-            bitsPerThousandWords: 12,
-            detectability: 0.25,
-            
+            id, name: 'Rhyming Synonym Substitution', category: 'linguistic',
+            bitsPerThousandWords, detectability,
+
             estimate: (text: string) => {
-                const wordCount = text.split(/\s+/).length;
-                // Count potential punctuation modification points
-                const punctCount = (text.match(/[,;:!?]/g) || []).length;
-                
-                // Estimate based on available punctuation marks
-                return Math.min(
-                    Math.floor(punctCount / 8), // Approx 1 bit per 8 punctuation marks
-                    Math.floor((wordCount / 1000) * this.bitsPerThousandWords)
-                );
-            },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Find modifiable punctuation positions
-                const punctPos: number[] = [];
-                const punctRe = /[,;:!?]/g;
-                let match;
-                
-                while ((match = punctRe.exec(text)) !== null) {
-                    punctPos.push(match.index);
-                }
-                
-                // Determine how many bits we can encode
-                const maxBits = Math.min(bits.length, Math.floor(punctPos.length / 8));
-                
-                // For each encodable bit, modify punctuation
-                // (Actual implementation would make specific changes)
-                
-                return { modifiedText: text, bitsEncoded: maxBits };
-            },
-            
-            extract: (text: string) => {
-                // Extract bits from punctuation frequency
-                return [];
-            }
-        };
-    }
-    
-    /**
-     * Quote style carrier
-     * Encodes bits by switching between quote styles
-     */
-    private createQuoteStyleCarrier(): CarrierTechnique {
-        return {
-            id: 'quote_style',
-            name: 'Quote Style Alternation',
-            category: 'punctuation',
-            bitsPerThousandWords: 4,
-            detectability: 0.2,
-            
-            estimate: (text: string) => {
-                const quoteCount = (text.match(/["']/g) || []).length;
-                return Math.floor(quoteCount / 4); // Approx 1 bit per 4 quotes
-            },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Implementation would switch between quote styles
-                const quotePositions = [];
-                const quoteRe = /["']/g;
-                let match;
-                
-                while ((match = quoteRe.exec(text)) !== null) {
-                    quotePositions.push({
-                        pos: match.index,
-                        char: match[0]
+                try {
+                    const doc = nlp(text);
+                    let count = 0;
+                    const potentialWords = Object.keys(reverseRhymeMap);
+                    doc.terms().forEach(term => {
+                        const word = term.text('reduced');
+                        if (potentialWords.includes(word)) {
+                            count++;
+                        }
                     });
+                    return count;
+                } catch (e) {
+                    console.warn(`[${id}] Estimate error: ${e instanceof Error ? e.message : e}`);
+                    return 0;
                 }
-                
-                // Group quotes into pairs
-                const quotePairs = [];
-                for (let i = 0; i < quotePositions.length; i += 2) {
-                    if (i + 1 < quotePositions.length) {
-                        quotePairs.push([quotePositions[i], quotePositions[i + 1]]);
+            },
+
+            apply: (text: string, bits: boolean[]) => {
+                let modifiedText = text;
+                let bitsEncoded = 0;
+                let currentBitIndex = 0;
+                const wordBoundaries: { start: number, end: number, original: string, replacement?: string }[] = [];
+
+                try {
+                    const doc = nlp(text);
+                    doc.terms().forEach(term => {
+                        const word = term.text('reduced');
+                        const originalCase = term.text();
+
+                        if (reverseRhymeMap[word] && currentBitIndex < bits.length) {
+                            const mapping = reverseRhymeMap[word];
+                            const baseOriginal = mapping.original;
+                            const currentIsRhyme = mapping.isRhyme;
+                            const targetRhyme = rhymeSwapMap[baseOriginal]?.rhyme;
+                            const targetOriginal = rhymeSwapMap[baseOriginal]?.original;
+
+                            // Ensure we have both original and rhyme defined for the base word
+                            if (!targetRhyme || !targetOriginal) {
+                                console.warn(`[${id}] Incomplete rhyme map for base word derived from '${word}'. Skipping.`);
+                                return; // Skip if map is inconsistent
+                            }
+
+                            const bit = bits[currentBitIndex];
+                            let replacement = originalCase; // Default: no change
+                            let applied = false;
+
+                            if (bit) { // Encode 1: Use rhyme
+                                if (!currentIsRhyme) {
+                                    replacement = targetRhyme;
+                                    applied = true;
+                                } else {
+                                    applied = true; // Already the rhyme
+                                }
+                            } else { // Encode 0: Use original/non-rhyme
+                                if (currentIsRhyme) {
+                                    replacement = targetOriginal;
+                                    applied = true;
+                                } else {
+                                    applied = true; // Already the original
+                                }
+                            }
+
+                            if (applied) {
+                                // Preserve case roughly (simple capitalization)
+                                if (originalCase === originalCase.toUpperCase()) {
+                                    replacement = replacement.toUpperCase();
+                                } else if (originalCase[0] === originalCase[0].toUpperCase()) {
+                                    replacement = replacement.charAt(0).toUpperCase() + replacement.slice(1);
+                                }
+
+                                const pointer = term.pointer?.[0];
+                                if (pointer) {
+                                    wordBoundaries.push({ start: pointer[0], end: pointer[1], original: originalCase, replacement: replacement });
+                                }
+                                bitsEncoded++;
+                                currentBitIndex++;
+                            }
+                        }
+                    });
+
+                    // Apply changes in reverse order
+                    wordBoundaries.sort((a, b) => b.start - a.start);
+                    for (const change of wordBoundaries) {
+                        if (change.replacement && change.original !== change.replacement) {
+                            modifiedText = modifiedText.substring(0, change.start) + change.replacement + modifiedText.substring(change.end);
+                        }
                     }
+                } catch (error) {
+                    console.warn(`[${id}] Apply error: ${error instanceof Error ? error.message : error}`);
                 }
-                
-                // Determine how many bits we can encode
-                const maxBits = Math.min(bits.length, quotePairs.length);
-                
-                // Here we would modify the quotes based on bits
-                
-                return { modifiedText: text, bitsEncoded: maxBits };
+                return { modifiedText, bitsEncoded };
             },
-            
+
             extract: (text: string) => {
-                // Extract bits from quote style patterns
-                return [];
+                const extractedBits: boolean[] = [];
+                try {
+                    const doc = nlp(text);
+                    doc.terms().forEach(term => {
+                        const word = term.text('reduced');
+                        if (reverseRhymeMap[word]) {
+                            extractedBits.push(reverseRhymeMap[word].isRhyme);
+                        }
+                    });
+                } catch (error) {
+                    console.warn(`[${id}] Extract error: ${error instanceof Error ? error.message : error}`);
+                }
+                return extractedBits;
             }
         };
     }
-    
+
     /**
-     * Optional comma carrier
-     * Encodes bits by using or omitting stylistically optional commas
+     * Description Detail Carrier
+     * Encodes bits by adding/removing specific descriptive adjectives or adverbs.
+     * Aims to subtly increase/decrease descriptive density.
+     * Reference: ./stylometric_carrier.ApiNotes.md#DescriptionDetail
+     * [paradigm:imperative]
      */
-    private createOptionalCommaCarrier(): CarrierTechnique {
+    private createDescriptionDetailCarrier(): CarrierTechnique {
+        const id = 'description_detail';
+        const bitsPerThousandWords = 4; // Moderate capacity potential
+        const detectability = 0.4; // Moderate, depends on naturalness of additions
+
+        // Map of nouns/verbs to potential optional descriptors (adjective/adverb)
+        // Bit 1 = Add descriptor, Bit 0 = Ensure descriptor is absent
+        const detailMap: Record<string, { word: string, descriptor: string, position: 'before' | 'after' }> = {
+            'car': { word: 'car', descriptor: 'shiny', position: 'before' }, // e.g., "shiny car"
+            'ran': { word: 'ran', descriptor: 'quickly', position: 'after' }, // e.g., "ran quickly"
+            'house': { word: 'house', descriptor: 'old', position: 'before' }, // e.g., "old house"
+            'walked': { word: 'walked', descriptor: 'slowly', position: 'after' }, // e.g., "walked slowly"
+            'sky': { word: 'sky', descriptor: 'blue', position: 'before' }, // e.g., "blue sky" - careful with common pairs
+        };
+        const allDescriptors = Object.values(detailMap).map(d => d.descriptor);
+        const descriptorRegex = new RegExp(`\\b(${allDescriptors.join('|')})\\b`, 'gi');
+
         return {
-            id: 'optional_comma',
-            name: 'Optional Comma Placement',
-            category: 'punctuation',
-            bitsPerThousandWords: 10,
-            detectability: 0.2,
-            
+            id, name: 'Description Detail Level', category: 'phraseology',
+            bitsPerThousandWords, detectability,
+
             estimate: (text: string) => {
-                const doc = nlp(text);
-                const sentences = doc.sentences().out('array');
-                
-                // Estimate optional comma positions (simplified)
-                let optionalCommaPositions = 0;
-                for (const sentence of sentences) {
-                    // Count potential optional comma positions
-                    const clauses = sentence.split(/\b(and|or|but|however|therefore|moreover)\b/);
-                    if (clauses.length > 2) {
-                        optionalCommaPositions += Math.floor(clauses.length / 2);
+                try {
+                    const doc = nlp(text);
+                    let count = 0;
+                    const targetWords = Object.keys(detailMap);
+                    doc.terms().forEach(term => {
+                        const word = term.text('reduced');
+                        if (targetWords.includes(word)) {
+                            count++;
+                        }
+                        if (allDescriptors.includes(word)) {
+                            count++;
+                        }
+                    });
+                    return Math.max(0, Math.floor(count / 2));
+                } catch (e) {
+                    console.warn(`[${id}] Estimate error: ${e instanceof Error ? e.message : e}`);
+                    return 0;
+                }
+            },
+
+            apply: (text: string, bits: boolean[]) => {
+                let modifiedText = text;
+                let bitsEncoded = 0;
+                let currentBitIndex = 0;
+                const edits: { start: number, end: number, text: string }[] = [];
+
+                try {
+                    const doc = nlp(text);
+                    doc.terms().forEach((term, i) => {
+                        const word = term.text('reduced');
+                        const originalTermText = term.text();
+
+                        if (detailMap[word] && currentBitIndex < bits.length) {
+                            const detail = detailMap[word];
+                            const descriptor = detail.descriptor;
+                            const position = detail.position;
+                            const bit = bits[currentBitIndex];
+                            let applied = false;
+                            let existingDescriptorTerm: any = null;
+
+                            if (position === 'before') {
+                                const prevTerm = doc.terms().get(i - 1);
+                                if (prevTerm && prevTerm.text('reduced') === descriptor) {
+                                    existingDescriptorTerm = prevTerm;
+                                }
+                            } else {
+                                const nextTerm = doc.terms().get(i + 1);
+                                if (nextTerm && nextTerm.text('reduced') === descriptor) {
+                                    existingDescriptorTerm = nextTerm;
+                                }
+                            }
+
+                            const pointer = term.pointer?.[0];
+                            if (!pointer) return;
+
+                            if (bit) {
+                                if (!existingDescriptorTerm) {
+                                    if (position === 'before') {
+                                        edits.push({ start: pointer[0], end: pointer[0], text: `${descriptor} ` });
+                                    } else {
+                                        edits.push({ start: pointer[1], end: pointer[1], text: ` ${descriptor}` });
+                                    }
+                                    applied = true;
+                                } else {
+                                    applied = true;
+                                }
+                            } else {
+                                if (existingDescriptorTerm) {
+                                    const descPointer = existingDescriptorTerm.pointer?.[0];
+                                    if (descPointer) {
+                                        let start = descPointer[0];
+                                        let end = descPointer[1];
+                                        if (position === 'before' && text[end] === ' ') end++;
+                                        if (position === 'after' && text[start - 1] === ' ') start--;
+                                        edits.push({ start: start, end: end, text: '' });
+                                        applied = true;
+                                    }
+                                } else {
+                                    applied = true;
+                                }
+                            }
+
+                            if (applied) {
+                                bitsEncoded++;
+                                currentBitIndex++;
+                            }
+                        }
+                    });
+
+                    edits.sort((a, b) => b.start - a.start);
+                    for (const edit of edits) {
+                        modifiedText = modifiedText.substring(0, edit.start) + edit.text + modifiedText.substring(edit.end);
                     }
+
+                } catch (error) {
+                    console.warn(`[${id}] Apply error: ${error instanceof Error ? error.message : error}`);
                 }
-                
-                return Math.floor(optionalCommaPositions / 2); // ~1 bit per 2 positions
+                return { modifiedText, bitsEncoded };
             },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Implementation would add/remove optional commas
-                // This is complex and requires linguistic analysis
-                // Simplified placeholder
-                return { modifiedText: text, bitsEncoded: 0 };
-            },
-            
+
             extract: (text: string) => {
-                // Extract bits from optional comma patterns
-                return [];
+                const extractedBits: boolean[] = [];
+                try {
+                    const doc = nlp(text);
+                    doc.terms().forEach((term, i) => {
+                        const word = term.text('reduced');
+                        if (detailMap[word]) {
+                            const detail = detailMap[word];
+                            const descriptor = detail.descriptor;
+                            const position = detail.position;
+                            let hasDescriptor = false;
+
+                            if (position === 'before') {
+                                const prevTerm = doc.terms().get(i - 1);
+                                if (prevTerm && prevTerm.text('reduced') === descriptor) {
+                                    hasDescriptor = true;
+                                }
+                            } else {
+                                const nextTerm = doc.terms().get(i + 1);
+                                if (nextTerm && nextTerm.text('reduced') === descriptor) {
+                                    hasDescriptor = true;
+                                }
+                            }
+                            extractedBits.push(hasDescriptor);
+                        }
+                    });
+                } catch (error) {
+                    console.warn(`[${id}] Extract error: ${error instanceof Error ? error.message : error}`);
+                }
+                return extractedBits;
             }
         };
     }
-    
+
     /**
-     * Synonym substitution carrier
-     * Encodes bits by replacing words with synonyms of varying frequency
+     * Counterpoint Phrase Carrier
+     * Encodes bits by adding/removing short counterpoint phrases (e.g., "however", "on the other hand").
+     * Reference: ./stylometric_carrier.ApiNotes.md#CounterpointPhrase
+     * [paradigm:imperative]
      */
-    private createSynonymSubstitutionCarrier(): CarrierTechnique {
+    private createCounterpointPhraseCarrier(): CarrierTechnique {
+        const id = 'counterpoint_phrase';
+        const bitsPerThousandWords = 2; // Low capacity
+        const detectability = 0.5; // Moderate, depends on context
+
+        // Phrases to add/remove. Bit 1 = Add, Bit 0 = Remove.
+        // Position: 'start' of sentence, 'before_conjunction' (like but/yet)
+        const counterpointPhrases = [
+            { phrase: 'However, ', position: 'start' },
+            { phrase: 'On the other hand, ', position: 'start' },
+            { phrase: ', though, ', position: 'middle' }
+        ];
+        const allPhrasesText = counterpointPhrases.map(p => p.phrase.trim().replace(/,/g, ''));
+        const phraseRegex = new RegExp(`\\b(${allPhrasesText.join('|')})\\b`, 'gi');
+
         return {
-            id: 'synonym_substitution',
-            name: 'Synonym Substitution',
-            category: 'linguistic',
-            bitsPerThousandWords: 10,
-            detectability: 0.4,
-            
+            id, name: 'Counterpoint Phrase Presence', category: 'phraseology',
+            bitsPerThousandWords, detectability,
+
             estimate: (text: string) => {
-                const wordCount = text.split(/\s+/).length;
-                // Conservatively estimate substitutable words (adjectives, adverbs, some verbs)
-                // ~10-15% of words in typical text
-                const substitutableWords = Math.floor(wordCount * 0.12);
-                return Math.min(
-                    Math.floor(substitutableWords / 2), // 1 bit per 2 suitable words
-                    Math.floor((wordCount / 1000) * this.bitsPerThousandWords)
-                );
+                try {
+                    const doc = nlp(text);
+                    const sentences = doc.sentences().length;
+                    const conjunctions = doc.match('#Conjunction').length;
+                    let existing = 0;
+                    let match;
+                    while ((match = phraseRegex.exec(text)) !== null) {
+                        existing++;
+                    }
+                    const estimate = Math.floor(sentences / 2) + conjunctions + existing;
+                    return Math.max(0, estimate);
+                } catch (e) {
+                    console.warn(`[${id}] Estimate error: ${e instanceof Error ? e.message : e}`);
+                    return 0;
+                }
             },
-            
+
             apply: (text: string, bits: boolean[]) => {
-                // Implementation would replace words with synonyms
-                // Requires a synonym dictionary and POS tagging
-                
-                return { modifiedText: text, bitsEncoded: 0 };
+                let modifiedText = text;
+                let bitsEncoded = 0;
+                let currentBitIndex = 0;
+                const edits: { start: number, end: number, text: string }[] = [];
+
+                try {
+                    const doc = nlp(modifiedText);
+                    const sentences = doc.sentences();
+
+                    sentences.forEach((sentence, sentenceIndex) => {
+                        if (currentBitIndex >= bits.length) return;
+
+                        const sentenceText = sentence.text();
+                        const phraseInfo = counterpointPhrases[sentenceIndex % counterpointPhrases.length];
+                        const phrase = phraseInfo.phrase;
+                        const phraseTrimmed = phrase.trim().replace(/,/g, '');
+                        const bit = bits[currentBitIndex];
+                        let applied = false;
+
+                        const hasPhrase = sentenceText.toLowerCase().includes(phraseTrimmed.toLowerCase());
+                        const pointer = sentence.pointer?.[0];
+                        if (!pointer) return;
+
+                        if (bit) {
+                            if (!hasPhrase) {
+                                if (phraseInfo.position === 'start') {
+                                    edits.push({ start: pointer[0], end: pointer[0], text: phrase });
+                                    applied = true;
+                                } else if (phraseInfo.position === 'middle') {
+                                    const commaIndex = sentenceText.indexOf(',');
+                                    const insertPos = commaIndex !== -1 ? commaIndex : Math.floor(sentenceText.length / 2);
+                                    const actualInsertPos = pointer[0] + insertPos;
+                                    edits.push({ start: actualInsertPos, end: actualInsertPos, text: phrase });
+                                    applied = true;
+                                }
+                            } else {
+                                applied = true;
+                            }
+                        } else {
+                            if (hasPhrase) {
+                                const regex = new RegExp(phrase.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'gi');
+                                const tempText = sentenceText.replace(regex, '');
+                                edits.push({ start: pointer[0], end: pointer[1], text: tempText });
+                                applied = true;
+                            } else {
+                                applied = true;
+                            }
+                        }
+
+                        if (applied) {
+                            bitsEncoded++;
+                            currentBitIndex++;
+                        }
+                    });
+
+                    edits.sort((a, b) => b.start - a.start);
+                    for (const edit of edits) {
+                        if (edit.start >= 0 && edit.end <= modifiedText.length && edit.start <= edit.end) {
+                            modifiedText = modifiedText.substring(0, edit.start) + edit.text + modifiedText.substring(edit.end);
+                        } else {
+                            console.warn(`[${id}] Invalid edit indices, skipping:`, edit);
+                        }
+                    }
+
+                } catch (error) {
+                    console.warn(`[${id}] Apply error: ${error instanceof Error ? error.message : error}`);
+                }
+                return { modifiedText, bitsEncoded };
             },
-            
+
             extract: (text: string) => {
-                // Would need original text or synonym dictionary to extract
-                return [];
-            }
-        };
-    }
-    
-    /**
-     * Lexical richness carrier
-     * Encodes bits by adjusting the type-token ratio in specific windows
-     */
-    private createLexicalRichnessCarrier(): CarrierTechnique {
-        return {
-            id: 'lexical_richness',
-            name: 'Lexical Richness Modulation',
-            category: 'linguistic',
-            bitsPerThousandWords: 3,
-            detectability: 0.45,
-            
-            estimate: (text: string) => {
-                const wordCount = text.split(/\s+/).length;
-                // MATTR windows provide few carrier opportunities
-                return Math.floor(wordCount / 300); // ~1 bit per 300 words
-            },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Implementation would adjust word variety in specific windows
-                // This is complex and would need careful word substitution
-                
-                const estimatedBits = this.estimate(text);
-                const bitsToEncode = Math.min(bits.length, estimatedBits);
-                
-                return { modifiedText: text, bitsEncoded: bitsToEncode };
-            },
-            
-            extract: (text: string) => {
-                // Extract bits from lexical richness patterns
-                return [];
-            }
-        };
-    }
-    
-    /**
-     * Function word carrier
-     * Encodes bits by modifying distribution patterns of common function words
-     */
-    private createFunctionWordCarrier(): CarrierTechnique {
-        return {
-            id: 'function_word',
-            name: 'Function Word Distribution',
-            category: 'linguistic',
-            bitsPerThousandWords: 6,
-            detectability: 0.3,
-            
-            estimate: (text: string) => {
-                // Function words are ~40% of typical text
-                const wordCount = text.split(/\s+/).length;
-                const functionWordCount = Math.floor(wordCount * 0.4);
-                
-                return Math.min(
-                    Math.floor(functionWordCount / 12), // ~1 bit per 12 function words
-                    Math.floor((wordCount / 1000) * this.bitsPerThousandWords)
-                );
-            },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Implementation would modify function word patterns
-                // (e.g., "that" vs omission, "which" vs "that", etc.)
-                
-                return { modifiedText: text, bitsEncoded: 0 };
-            },
-            
-            extract: (text: string) => {
-                // Extract bits from function word patterns
-                return [];
-            }
-        };
-    }
-    
-    /**
-     * Syllable count carrier
-     * Encodes bits by adjusting word choices to affect syllable counts
-     */
-    private createSyllableCountCarrier(): CarrierTechnique {
-        return {
-            id: 'syllable_count',
-            name: 'Syllable Count Adjustment',
-            category: 'readability',
-            bitsPerThousandWords: 4,
-            detectability: 0.35,
-            
-            estimate: (text: string) => {
-                const sentenceCount = text.split(/[.!?]+\s/).length;
-                return Math.floor(sentenceCount / 5); // ~1 bit per 5 sentences
-            },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Implementation would adjust word choices to affect syllable counts
-                // This would require a syllable counter and word alternatives
-                
-                return { modifiedText: text, bitsEncoded: 0 };
-            },
-            
-            extract: (text: string) => {
-                // Extract bits from syllable patterns
-                return [];
-            }
-        };
-    }
-    
-    /**
-     * Voice style carrier
-     * Encodes bits by alternating between passive and active voice
-     */
-    private createVoiceStyleCarrier(): CarrierTechnique {
-        return {
-            id: 'voice_style',
-            name: 'Passive/Active Voice Switching',
-            category: 'readability',
-            bitsPerThousandWords: 3,
-            detectability: 0.5,
-            
-            estimate: (text: string) => {
-                const doc = nlp(text);
-                // This is a very rough estimate since voice detection is complex
-                return Math.floor(doc.sentences().length() / 10); // ~1 bit per 10 sentences
-            },
-            
-            apply: (text: string, bits: boolean[]) => {
-                // Implementation would convert between active/passive voice
-                // This is complex and requires deep language understanding
-                
-                return { modifiedText: text, bitsEncoded: 0 };
-            },
-            
-            extract: (text: string) => {
-                // Extract bits from voice patterns
-                return [];
+                const extractedBits: boolean[] = [];
+                try {
+                    const doc = nlp(text);
+                    const sentences = doc.sentences();
+
+                    sentences.forEach((sentence, sentenceIndex) => {
+                        const sentenceText = sentence.text();
+                        const phraseInfo = counterpointPhrases[sentenceIndex % counterpointPhrases.length];
+                        const phraseTrimmed = phraseInfo.phrase.trim().replace(/,/g, '');
+
+                        const hasPhrase = sentenceText.toLowerCase().includes(phraseTrimmed.toLowerCase());
+                        extractedBits.push(hasPhrase);
+                    });
+                } catch (error) {
+                    console.warn(`[${id}] Extract error: ${error instanceof Error ? error.message : error}`);
+                }
+                return extractedBits;
             }
         };
     }
@@ -796,83 +957,96 @@ export class StylometricCarrier {
 
 /**
  * Demonstrate the stylometric carrier capabilities
- * 
+ *
  * @param text Sample text to use as carrier
  * @param payload Sample payload to embed
  */
 export function demonstrateStylometricCarrier(
-    text: string,
-    payload: string
+    text: string = "This is a sample text for demonstrating stylometric carriers. It contains several sentences, uses common words like 'use' and 'help', and includes punctuation like commas, and quotes \"like this\". We can try to embed data.",
+    payload: string = "secret"
 ): void {
     console.log("=== STYLOMETRIC CARRIER DEMO ===");
-    
-    // Create carrier
+
     const carrier = new StylometricCarrier();
-    
-    // Analyze carrying capacity
+
     console.log("\n1. ANALYZING CARRYING CAPACITY:");
     console.log("-------------------------------");
-    const analysis = carrier.analyzeCarryingCapacity(text);
-    console.log(`Total capacity: ${analysis.totalCapacityBits} bits (${Math.floor(analysis.totalCapacityBits / 8)} bytes)`);
-    console.log("Carrier distribution:");
-    console.log(`- Phraseology: ${analysis.carrierDistribution.phraseology} bits`);
-    console.log(`- Punctuation: ${analysis.carrierDistribution.punctuation} bits`);
-    console.log(`- Linguistic: ${analysis.carrierDistribution.linguistic} bits`);
-    console.log(`- Readability: ${analysis.carrierDistribution.readability} bits`);
-    console.log(`Recommended max payload: ${analysis.recommendedMaxPayloadBytes} bytes`);
-    
-    // Create sample payload
+    let analysis: CarrierAnalysis;
+    try {
+        analysis = carrier.analyzeCarryingCapacity(text);
+        console.log(`Total estimated capacity: ${analysis.totalCapacityBits} bits (~${Math.floor(analysis.totalCapacityBits / 8)} bytes)`);
+        console.log("Carrier distribution (estimated bits):");
+        console.log(`- Phraseology: ${analysis.carrierDistribution.phraseology}`);
+        console.log(`- Punctuation: ${analysis.carrierDistribution.punctuation}`);
+        console.log(`- Linguistic: ${analysis.carrierDistribution.linguistic}`);
+        console.log(`- Readability: ${analysis.carrierDistribution.readability}`);
+        console.log(`Recommended max payload: ${analysis.recommendedMaxPayloadBytes} bytes`);
+    } catch (e) {
+        console.error("Error during analysis:", e.message);
+        analysis = {
+            totalCapacityBits: 0, carrierDistribution: { phraseology: 0, punctuation: 0, linguistic: 0, readability: 0 },
+            safeModificationRanges: {}, recommendedMaxPayloadBytes: 0
+        };
+    }
+
     const encoder = new TextEncoder();
     const payloadBytes = encoder.encode(payload);
-    
-    console.log(`\nPayload size: ${payloadBytes.length} bytes`);
-    
-    // Encode payload (with error handling)
+    console.log(`\nPayload to encode: "${payload}" (${payloadBytes.length} bytes)`);
+
+    if (payloadBytes.length > analysis.recommendedMaxPayloadBytes && analysis.recommendedMaxPayloadBytes > 0) {
+        console.warn(`Payload size (${payloadBytes.length} bytes) exceeds recommended capacity (${analysis.recommendedMaxPayloadBytes} bytes). Encoding might be lossy or fail.`);
+    } else if (analysis.totalCapacityBits === 0) {
+        console.error("Estimated capacity is zero. Cannot encode payload.");
+        console.log("\n=== DEMO COMPLETE (Encoding Skipped) ===");
+        return;
+    }
+
     try {
-        // Define encoding options
         const options: EncodingOptions = {
             usePhraseologyCarriers: true,
             usePunctuationCarriers: true,
             useLinguisticCarriers: true,
-            useReadabilityCarriers: false, // Disable readability carriers for demo
-            errorCorrection: true,
-            preserveReadingLevel: true
+            useReadabilityCarriers: false,
+            maxDetectionRisk: 0.7
         };
-        
+
         console.log("\n2. ENCODING PAYLOAD:");
         console.log("--------------------");
-        console.log("Original text (first 100 chars):");
-        console.log(text.substring(0, 100) + "...");
-        
-        // Encode the payload
+        console.log("Original text:\n", text);
+
         const modifiedText = carrier.encodePayload(text, payloadBytes, options);
-        
-        console.log("\nModified text (first 100 chars):");
-        console.log(modifiedText.substring(0, 100) + "...");
-        
-        // Extract the payload
+        console.log("\nModified text:\n", modifiedText);
+        if (modifiedText === text) {
+            console.warn("Encoding did not modify the text. Payload might be too large or no suitable carriers found/applied.");
+        }
+
         console.log("\n3. EXTRACTING PAYLOAD:");
         console.log("----------------------");
         const extractedBytes = carrier.extractPayload(modifiedText, options);
-        
-        // Decode the extracted payload
-        const decoder = new TextDecoder();
-        const extractedPayload = decoder.decode(extractedBytes);
-        
-        console.log(`Extracted payload: "${extractedPayload}"`);
-        console.log(`Extraction successful: ${extractedPayload === payload ? 'YES' : 'NO'}`);
-        
-        // Show stylometric features before and after
-        console.log("\n4. STYLOMETRIC FEATURES COMPARISON:");
-        console.log("----------------------------------");
-        const originalFeatures = carrier.analyzeCarryingCapacity(text);
-        const modifiedFeatures = carrier.analyzeCarryingCapacity(modifiedText);
-        
-        console.log(`Original capacity: ${originalFeatures.totalCapacityBits} bits`);
-        console.log(`Modified capacity: ${modifiedFeatures.totalCapacityBits} bits`);
+
+        const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
+        const relevantExtractedBytes = extractedBytes.slice(0, payloadBytes.length);
+        const extractedPayload = decoder.decode(relevantExtractedBytes).replace(/\u0000/g, '');
+
+        console.log(`Extracted payload (first ${payloadBytes.length} bytes): "${extractedPayload}"`);
+
+        const originalBits = carrier.bytesToBits(payloadBytes);
+        const extractedBits = carrier.bytesToBits(extractedBytes);
+        let correctBits = 0;
+        for (let i = 0; i < originalBits.length && i < extractedBits.length; ++i) {
+            if (originalBits[i] === extractedBits[i]) {
+                correctBits++;
+            }
+        }
+        const accuracy = originalBits.length > 0 ? (correctBits / originalBits.length * 100).toFixed(1) : "N/A";
+        console.log(`Bit-level accuracy (approx): ${accuracy}% (${correctBits}/${originalBits.length} correct bits)`);
+        console.log(`Extraction matches original payload: ${extractedPayload === payload ? 'YES' : 'NO'`);
+
     } catch (error) {
-        console.error(`Error: ${error.message}`);
+        console.error(`\nError during encoding/extraction demo: ${error.message}`);
+        console.error(error.stack);
     }
-    
+
     console.log("\n=== DEMO COMPLETE ===");
+    console.log("Note: Accuracy depends heavily on the text, payload size, and the heuristic nature of some carriers.");
 }

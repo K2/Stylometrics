@@ -1,104 +1,40 @@
-# Stylometrics Project: ApiNotes
+# Project-Level ApiNotes for Stylometrics
 
-## Project Overview
-Stylometrics is a TypeScript library that implements advanced text analysis techniques for both AI-generated text detection and steganographic information embedding. The project leverages statistical and linguistic patterns in text to provide dual-purpose functionality: security analysis and covert communication.
+**Version:** 0.1.0 (Initial Generation: 2025-04-15)
 
-## Architectural Principles
+**Project Goal:** To develop a robust framework for embedding persistent, verifiable information within digital text content using multi-layered steganographic techniques based on stylometry, structure, and zero-width characters. This framework aims to support Digital Rights Management (DRM), Data Loss Prevention (DLP), and content provenance tracking, even when content undergoes significant transformation.
 
-### Dual-Purpose Design
-The core insight driving this project is that the same stylometric features that distinguish human from AI writing can be deliberately manipulated to carry hidden information. This creates a unique steganographic approach that maintains natural text properties while embedding data.
+**Core Architectural Principles:**
 
-### Layered Architecture
-1. **Feature Extraction Layer**: Analyzes raw text to extract stylometric features
-2. **Detection Layer**: Classifies text and identifies authorship changes
-3. **Carrier Layer**: Manipulates stylometric features to embed information
-4. **Integration Layer**: Unifies detection and steganography capabilities
+1.  **Layered Security:** Employ multiple encoding techniques (zero-width, stylometric, structural) with varying trade-offs in capacity, resilience, and detectability.
+2.  **Modularity:** Encapsulate specific encoding/decoding techniques and analysis tools into distinct modules (`.genai.mts` scripts).
+3.  **Verification:** Integrate cryptographic signing and hashing to ensure the authenticity and integrity of embedded metadata and the content itself.
+4.  **Resilience:** Utilize erasure coding to allow recovery of embedded data even if parts of the carrier text are corrupted or modified.
+5.  **Configuration:** Allow flexible combination and configuration of encoding layers and techniques.
+6.  **Detection Awareness:** Incorporate stylometric analysis both for embedding (to minimize detection) and for detecting potential manipulation or AI generation.
 
-### Modularity & Extension
-The system is designed with clear separation of concerns, allowing for:
-- Independent development of new carrier techniques
-- Extension of feature extraction capabilities
-- Integration with external language models and embedding systems
-- Application to various text analysis use cases
+**Key Modules & Interactions:**
 
-### Steganographic Design Principles
-1. **Distributed Payload**: Information is spread across multiple stylometric dimensions
-2. **Naturalness Preservation**: Modifications stay within human writing parameters
-3. **Detection Resistance**: Changes are calibrated to avoid triggering AI detection
-4. **Adaptive Capacity**: Capacity analysis adapts to specific text characteristics
+*   **`safety_embedded_word.genai.mts`:** High-capacity zero-width encoding with cryptographic signing. (Foundation Layer)
+*   **`stylometric_carrier.genai.mts`:** Implements individual stylometric feature manipulation techniques (e.g., sentence length, punctuation). Acts as a toolkit. [paradigm:functional] for analysis, [paradigm:imperative] for text manipulation.
+*   **`safety_stylometric_encoder.genai.mts`:** Uses `stylometric_carrier` to embed data via linguistic style changes. (Resilience Layer 1)
+*   **`safety_structural_encoder.genai.mts`:** Embeds data via high-level document structure changes (POV, tense, paragraph patterns). (Resilience Layer 2 - Highest)
+*   **`stylometric_fusion.genai.mts`:** Orchestrates multiple stylometric carriers from `stylometric_carrier` for increased capacity/resilience. Also includes a TF.js model for *detecting* AI text using fused features. [paradigm:imperative] for TF.js.
+*   **`stylometric_detection.genai.mts`:** Extracts stylometric features and implements detection algorithms (AI classification, change point detection). [paradigm:imperative] for analysis loops.
+*   **Integration/Demo Scripts (`safety_*_demo.genai.mts`, `safety_enhanced_integration.genai.mts`):** Combine layers to demonstrate end-to-end workflows.
 
-## Core Components
+**LLM Regeneration Context:**
 
-### Stylometric Detection (.genai.mts)
-- Feature extraction from text (lexical richness, readability, etc.)
-- Binary classification of text as human/AI-generated
-- Timeline analysis for authorship change detection
+*   This project uses GenAIScript (`.genai.mts`) for orchestration and core logic.
+*   TypeScript is the primary language.
+*   Dependencies include `compromise` for NLP and `@tensorflow/tfjs` for ML.
+*   Focus on implementing the specific encoding/decoding logic described in each module's documentation and comments.
+*   Ensure cryptographic signing and erasure coding are integrated where specified.
+*   Maintain clear separation between encoding layers and analysis tools.
 
-### Stylometric Carrier (.genai.mts)
-- Analysis of text carrying capacity
-- Multiple carrier techniques to embed information
-- Verification of text naturalness after modification
-- Safe modification ranges to preserve text authenticity
+**Constraints:**
 
-### Specialized Carriers (.mts)
-- Individual implementations of specific carrier techniques
-- Optimized for particular text features (punctuation, quotation, etc.)
-- Graduated detectability ratings for different techniques
-
-### Unified Toolkit (.mts)
-- Integration of detection and carrier capabilities
-- Comprehensive text analysis for dual purposes
-- Common utilities for bit/byte/text conversion
-
-## Data Flow
-
-```
-Text Input → Feature Extraction → |→ AI Detection → Classification
-                                 |
-                                 |→ Carrying Capacity Analysis → Carrier Selection
-                                            ↓
-                        Payload → Encoding → Text Modification → Output
-                                            ↓
-                                    Extract → Recovered Payload
-```
-
-## Extension Points
-
-### New Carrier Techniques
-- Additional stylometric dimensions can be exploited
-- Novel carrier implementations can target specific text types
-- Detectability vs. capacity tradeoffs can be explored
-
-### Advanced Feature Extraction
-- Deep learning models for feature extraction
-- Language-specific stylometric features
-- Genre and domain-specific feature sets
-
-### Integration Capabilities
-- API for external applications
-- CLI tools for batch processing
-- Web interface for interactive analysis
-
-## Implementation Constraints
-
-### Language & Runtime
-- TypeScript with ES Modules (.mts extension)
-- Compatible with both browser and Node.js environments
-- Minimal external dependencies for core functionality
-
-### Performance Considerations
-- Feature extraction should be efficient for large texts
-- Memory usage should scale reasonably with text size
-- Encoding/decoding operations should be optimizable
-
-### Security Aspects
-- Steganographic techniques should resist statistical analysis
-- Detection should work against evolving AI models
-- Payload extraction should require appropriate keys/parameters
-
-## Future Directions
-- Weighted matrix capacity analysis for adaptive embedding
-- Higher-order feature manipulation techniques
-- Parity/erasure coding for resilient information recovery
-- Metadata-based carrier techniques for structured documents
-- Multi-modal steganography across text properties
+*   Implementations should be functional but may not be perfectly optimized for naturalness or computational efficiency initially.
+*   Synonym substitution requires a basic internal list or reliance on `compromise`.
+*   Advanced NLP tasks (voice change, complex comma rules) will use simplified heuristics.
+*   TensorFlow.js models are basic feedforward networks as described. Training requires sample data (provided in demos or assumed).
