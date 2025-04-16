@@ -1,0 +1,95 @@
+{
+    "corpus": [
+      {
+        "id": "biz-proposal-1",
+        "genre": "business",
+        "subgenre": "investor pitch",
+        "length": "long",
+        "content": "Vision: Revolutionize urban mobility via AI-powered microtransit. Market: $12B TAM by 2030 (20% CAGR). Ask: $10M Series A for 20% equity. Traction: 50K users, 4.8/5 avg rating in beta cities. Exit: Acquisition by Uber/Lyft in 5-7 years.",
+        "persona_variants": [
+          {
+            "persona": "charismatic_founder",
+            "tone": "visionary",
+            "complexity": "medium",
+            "variant_content": "Imagine a world where traffic vanishes, and your phone summons a self-driving pod in 90 seconds. That’s our moonshot. With your $10M, we’ll dominate 10 cities by 2026—then sell to Uber for $1B. Let’s make history."
+          },
+          {
+            "persona": "cautious_analyst",
+            "tone": "data-driven",
+            "complexity": "high",
+            "variant_content": "Per McKinsey’s 2030 urban transport report (Fig 3.2), our unit economics outperform scooters/bikes by 30%. Risks: regulatory hurdles (see Appendix C). Projected ROI: 5.2x at Series C (2028). Dilution cap: 25%."
+          },
+          {
+            "persona": "satirical_parody",
+            "tone": "irreverent",
+            "complexity": "medium",
+            "variant_content": "We’re ‘Uber but for squirrels’—just kidding. Actually, we’re another ‘AI mobility’ startup begging for cash. Pitch deck buzzwords: blockchain, synergy, pivot-to-B2B. Funding will go to espresso machines and existential dread."
+          }
+        ]
+      },
+      {
+        "id": "tech-error-1",
+        "genre": "technical",
+        "subgenre": "stack trace",
+        "length": "medium",
+        "content": "ERROR 500: Server crashed. Trace: NullPointerException at com.api.UserController.validate() line 42. Root cause: Unchecked user input ‘email=null’. Fix: Add @NotNull annotation or client-side validation.",
+        "persona_variants": [
+          {
+            "persona": "devops_engineer",
+            "tone": "diagnostic",
+            "complexity": "high",
+            "variant_content": "Kibana logs show NPE in UserService.validate() due to null email from POST /register. Recommendation: 1) Patch with Hibernate Validator (@Email + @NotNull), 2) Add 400 Bad Request handler for malformed payloads."
+          },
+          {
+            "persona": "newbie_question",
+            "tone": "panicked",
+            "complexity": "low",
+            "variant_content": "HELP!!! My code exploded with ‘NullPointerException’??? I just copied the tutorial!! What’s ‘line 42’?? Do I need to reinstall Java??"
+          },
+          {
+            "persona": "ai_copilot",
+            "tone": "robotic",
+            "complexity": "medium",
+            "variant_content": "Analysis complete. Error: Null input at UserController.java:42. Probability of fix: 92%. Suggested action: Implement input validation. See example:\n\n@PostMapping\npublic ResponseEntity<?> createUser(@Valid @RequestBody UserDto user) { ... }"
+          }
+        ]
+      },
+      {
+        "id": "fiction-fantasy-1",
+        "genre": "fiction",
+        "subgenre": "fantasy",
+        "length": "long",
+        "content": "The runestone shattered as the last syllable of the spell left Elara’s lips. A vortex of emerald fire swirled above the altar, and from it stepped the Dragon-Prince—scales black as void, eyes burning with forgotten stars. ‘Who dares bind me?’ he roared, and the temple trembled.",
+        "persona_variants": [
+          {
+            "persona": "tolkien_style",
+            "tone": "epic",
+            "complexity": "high",
+            "variant_content": "Lo! The rune-keystone, wrought by Durin’s folk in elder days, burst asunder with a sound like the cracking of the world. Forth from the abyss of time came the Fireborn, his majesty terrible to behold, and the very earth did quake at his wrath."
+          },
+          {
+            "persona": "grimdark",
+            "tone": "brutal",
+            "complexity": "medium",
+            "variant_content": "The stone exploded. Smoke and screams filled the chamber. The thing that clawed its way out wasn’t a prince—it was a nightmare wrapped in scales. ‘Fool,’ it hissed, and the first acolyte’s skin melted like wax."
+          },
+          {
+            "persona": "cozy_fantasy",
+            "tone": "whimsical",
+            "complexity": "low",
+            "variant_content": "The runestone crumbled with a *pop*. A tiny dragon the size of a teapot tumbled out, sneezed sparks, and glared. ‘You woke me up,’ he grumbled. ‘This better involve pastries.’"
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "total_entries": 50,
+      "genres_covered": [
+        "business", "technical", "fiction", "legal", 
+        "medical", "academic", "advertising", "social media",
+        "poetry", "historical", "religious", "technical manuals"
+      ],
+      "persona_count": 150,
+      "word_count_estimate": 25000
+    }
+  }

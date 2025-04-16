@@ -1,13 +1,13 @@
 /**
  * Stylometric Feature Extraction for AI Text Detection
- * 
+ *
  * This module implements stylometric feature extraction techniques based on:
  * "Stylometric Detection of AI-Generated Text in Twitter Timelines"
  * by Kumarage et al. (2023)
- * 
+ *
  * Flow:
  * Text -> Feature Extraction (Phraseology, Punctuation, Linguistic) -> Feature Vector
- * 
+ *
  * The extracted features can be used for:
  * 1. Binary classification of text authorship (human vs AI)
  * 2. Change point detection in text timelines
@@ -29,23 +29,43 @@ class TextStatistics {
      * Split text into paragraphs
      */
     static getParagraphs(text: string): string[] {
-        return text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+        // Improved regex to handle various newline combinations and trim results
+        return text.split(/(?:\r?\n){2,}/).map(p => p.trim()).filter(p => p.length > 0);
     }
-    
+
     /**
-     * Split text into sentences (simple approach)
+     * Split text into sentences (improved approach using lookarounds)
      */
     static getSentences(text: string): string[] {
-        return text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+        // Use lookarounds to keep delimiters, split, then filter empty strings
+        // Handles basic cases like Mr. Mrs. Dr. but might need more refinement for edge cases
+        const sentences = text
+            .replace(/([.!?])\s*(?=[A-Z"'])/g, "$1|") // Add marker after sentence end before capital letter/quote
+            .split("|")
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+        // Fallback for texts without clear sentence-ending punctuation followed by caps
+        if (sentences.length <= 1 && text.length > 0) {
+             return text.split(/[.!?]+/).map(s => s.trim()).filter(s => s.length > 0);
+        }
+        return sentences;
     }
-    
+
     /**
-     * Get word count for text
+     * Get word count for text, handling punctuation attached to words
      */
     static getWords(text: string): string[] {
-        return text.split(/\s+/).filter(w => w.trim().length > 0);
+        // Match sequences of word characters
+        return (text.match(/\b[\w']+\b/g) || []).filter(w => w.length > 0);
     }
-    
+
+    /**
+     * Get all characters count
+     */
+    static getCharacterCount(text: string): number {
+        return text.length;
+    }
+
     /**
      * Calculate mean of an array of numbers
      */
@@ -53,7 +73,7 @@ class TextStatistics {
         if (values.length === 0) return 0;
         return values.reduce((sum, val) => sum + val, 0) / values.length;
     }
-    
+
     /**
      * Calculate standard deviation of an array of numbers
      */
@@ -64,40 +84,76 @@ class TextStatistics {
         const avgSquareDiff = TextStatistics.mean(squareDiffs);
         return Math.sqrt(avgSquareDiff);
     }
-    
+
     /**
      * Count syllables in a word (approximate algorithm)
      * Based on approach described in Kincaid et al. (1975)
+     * Note: This is a heuristic and may not be accurate for all English words.
      */
     static countSyllables(word: string): number {
         word = word.toLowerCase().trim();
-        
-        // Edge cases
+
+        // Remove non-alphabetic characters from the end (like punctuation)
+        word = word.replace(/[^a-z]+$/, '');
+        // Remove non-alphabetic characters from the start
+        word = word.replace(/^[^a-z]+/, '');
+
+        // Edge cases for very short words or empty strings after cleaning
+        if (word.length === 0) return 0;
         if (word.length <= 3) return 1;
-        
-        // Remove punctuation
-        word = word.replace(/[^\w]/g, '');
-        
-        // Count vowel groups
-        const vowels = "aeiouy";
-        let count = 0;
-        let prevIsVowel = false;
-        
-        for (let i = 0; i < word.length; i++) {
-            const isVowel = vowels.indexOf(word[i]) !== -1;
-            if (isVowel && !prevIsVowel) {
-                count++;
-            }
-            prevIsVowel = isVowel;
+
+        // Handle 'ia' diphthong, common 'le' ending
+        if (word.endsWith('ia') && word.length > 4) word = word.substring(0, word.length - 2) + 'a'; // Treat 'ia' as one vowel sound in this heuristic
+        if (word.endsWith('le') && word.length > 2 && !/[aeiouy]/.test(word.charAt(word.length - 3))) {
+             // If 'le' ending preceded by consonant, add a syllable count later
+             word = word.substring(0, word.length - 2);
         }
-        
-        // Adjust for common patterns
-        if (word.endsWith('e')) count--;
-        if (word.endsWith('le') && word.length > 2 && vowels.indexOf(word.charAt(word.length - 3)) === -1) count++;
-        if (count === 0) count = 1;
-        
+
+        // Remove silent 'e' at the end, but not if it's the only vowel
+        if (word.endsWith('e') && word.length > 1 && /[aeiouy]/.test(word.substring(0, word.length - 1))) {
+            word = word.substring(0, word.length - 1);
+        }
+
+        // Count vowel groups (sequences of vowels)
+        const vowelGroups = word.match(/[aeiouy]+/g);
+        let count = vowelGroups ? vowelGroups.length : 0;
+
+        // Adjust for 'le' ending if removed earlier
+        if (word.endsWith('le') && word.length > 2 && !/[aeiouy]/.test(word.charAt(word.length - 3))) {
+             count++;
+        }
+
+        // Ensure at least one syllable for any word
+        if (count === 0 && word.length > 0) count = 1;
+
         return count;
     }
+
+    /**
+     * Calculate Type-Token Ratio (TTR)
+     */
+    static calculateTTR(words: string[]): number {
+        if (words.length === 0) return 0;
+        const uniqueWords = new Set(words.map(w => w.toLowerCase()));
+        return uniqueWords.size / words.length;
+    }
+
+     /**
+      * Calculate Moving Average Type-Token Ratio (MATTR)
+      * @param words List of words
+      * @param windowSize Size of the moving window
+      */
+     static calculateMATTR(words: string[], windowSize: number): number {
+         if (words.length === 0 || windowSize <= 0) return 0;
+         if (words.length <= windowSize) return TextStatistics.calculateTTR(words);
+
+         const ttrValues: number[] = [];
+         for (let i = 0; i <= words.length - windowSize; i++) {
+             const windowWords = words.slice(i, i + windowSize);
+             ttrValues.push(TextStatistics.calculateTTR(windowWords));
+         }
+         return TextStatistics.mean(ttrValues);
+     }
 }
 
 /**
@@ -105,34 +161,53 @@ class TextStatistics {
  * as described in Kumarage et al. (2023)
  */
 export class StyleFeatureExtractor {
+    extract(text: string): import("@tensorflow/tfjs-core").Tensor1D | PromiseLike<import("@tensorflow/tfjs-core").Tensor1D> {
+        throw new Error('Method not implemented.');
+    }
     private windowSize: number;
-    private specialPunct: string[];
-    
+    // Expanded list based on common usage and potential AI differences
+    private punctuationMarks: string[];
+
     /**
      * Initialize the stylometric feature extractor
-     * 
+     *
      * @param windowSize Size of the window for Moving Average Type-Token Ratio (MATTR)
      *                   as described in Covington & McFall (2010)
      */
     constructor(windowSize: number = 50) {
         this.windowSize = windowSize;
-        this.specialPunct = ['!', "'", ',', ':', ';', '?', '"', '-', '–', '@', '#'];
+        // Define the set of punctuation marks to count
+        this.punctuationMarks = [
+            ',', '.', ';', ':', '!', '?', // Standard sentence punctuation
+            '"', "'", '`', // Quotes
+            '(', ')', '[', ']', '{', '}', // Brackets/Parentheses
+            '-', '–', '—', // Hyphens/Dashes
+            '/', '\\', // Slashes
+            '@', '#', '$', '%', '&', '*', // Symbols often used online
+            '+', '=', '<', '>' // Other symbols
+        ];
     }
-    
+
     /**
      * Extract all stylometric features from the given text
-     * 
+     *
      * @param text Input text to analyze
      * @returns Dictionary containing all extracted stylometric features
      */
     extractAllFeatures(text: string): FeatureMap {
         const features: FeatureMap = {};
-        
+
+        // Basic counts needed by multiple categories
+        const paragraphs = TextStatistics.getParagraphs(text);
+        const sentences = TextStatistics.getSentences(text);
+        const words = TextStatistics.getWords(text);
+        const charCount = TextStatistics.getCharacterCount(text); // Total characters
+
         // Extract each feature category
-        const phraseology = this.extractPhraseologyFeatures(text);
-        const punctuation = this.extractPunctuationFeatures(text);
-        const linguistic = this.extractLinguisticFeatures(text);
-        
+        const phraseology = this.extractPhraseologyFeatures(text, paragraphs, sentences, words);
+        const punctuation = this.extractPunctuationFeatures(text, charCount);
+        const linguistic = this.extractLinguisticFeatures(text, words, sentences, charCount);
+
         // Combine all features
         return {
             ...phraseology,
@@ -140,36 +215,39 @@ export class StyleFeatureExtractor {
             ...linguistic
         };
     }
-    
+
     /**
      * Extract phraseology features that quantify how the author organizes words and phrases
-     * 
+     *
      * @param text Input text to analyze
+     * @param paragraphs Pre-calculated paragraphs
+     * @param sentences Pre-calculated sentences
+     * @param words Pre-calculated words
      * @returns Dictionary of phraseology features
      */
-    extractPhraseologyFeatures(text: string): FeatureMap {
+    extractPhraseologyFeatures(
+        text: string, // Keep text param if needed for future features
+        paragraphs: string[],
+        sentences: string[],
+        words: string[]
+    ): FeatureMap {
         const features: FeatureMap = {};
-        
-        // Split into paragraphs, sentences, and words
-        const paragraphs = TextStatistics.getParagraphs(text);
-        const sentences = TextStatistics.getSentences(text);
-        const words = TextStatistics.getWords(text);
-        
+
         // Calculate words per sentence
-        const wordsPerSentence = sentences.map(s => 
+        const wordsPerSentence = sentences.map(s =>
             TextStatistics.getWords(s).length
         );
-        
+
         // Calculate words per paragraph
-        const wordsPerParagraph = paragraphs.map(p => 
+        const wordsPerParagraph = paragraphs.map(p =>
             TextStatistics.getWords(p).length
         );
-        
+
         // Calculate sentences per paragraph
-        const sentencesPerParagraph = paragraphs.map(p => 
+        const sentencesPerParagraph = paragraphs.map(p =>
             TextStatistics.getSentences(p).length
         );
-        
+
         // Store features
         features.word_count = words.length;
         features.sentence_count = sentences.length;
@@ -180,374 +258,102 @@ export class StyleFeatureExtractor {
         features.stdev_words_per_paragraph = TextStatistics.standardDeviation(wordsPerParagraph);
         features.mean_sentences_per_paragraph = TextStatistics.mean(sentencesPerParagraph);
         features.stdev_sentences_per_paragraph = TextStatistics.standardDeviation(sentencesPerParagraph);
-        
+
         return features;
     }
-    
+
     /**
      * Extract punctuation features that quantify how the author uses punctuation
-     * 
+     *
      * @param text Input text to analyze
+     * @param charCount Total character count
      * @returns Dictionary of punctuation features
      */
-    extractPunctuationFeatures(text: string): FeatureMap {
+    extractPunctuationFeatures(text: string, charCount: number): FeatureMap {
         const features: FeatureMap = {};
-        
-        // Count all punctuation
-        const allPunct = text.match(/[^\w\s]/g) || [];
-        features.total_punct_count = allPunct.length;
-        
-        // Count specific punctuation marks
-        for (const punct of this.specialPunct) {
-            // Count occurrences using split
-            const count = text.split(punct).length - 1;
-            features[`punct_${punct}`] = count;
-        }
-        
+        let totalPunctuation = 0;
+
+        // Count each specific punctuation mark
+        this.punctuationMarks.forEach(punct => {
+            const regex = new RegExp(`\\${punct}`, 'g'); // Escape the punctuation for regex
+            const count = (text.match(regex) || []).length;
+            features[`punct_${punct}_freq`] = charCount > 0 ? count / charCount : 0;
+            totalPunctuation += count;
+        });
+
+        // Total punctuation frequency
+        features.total_punctuation_freq = charCount > 0 ? totalPunctuation / charCount : 0;
+
+        // Ratio of specific punctuation types (example: commas vs periods)
+        const commaCount = (text.match(/,/g) || []).length;
+        const periodCount = (text.match(/\./g) || []).length;
+        features.comma_period_ratio = periodCount > 0 ? commaCount / periodCount : (commaCount > 0 ? Infinity : 0);
+
+        // Add more complex punctuation features if needed (e.g., frequency of quotes, brackets)
+
         return features;
     }
-    
+
     /**
-     * Extract linguistic diversity features
-     * 
+     * Extract linguistic features related to vocabulary and complexity
+     *
      * @param text Input text to analyze
+     * @param words Pre-calculated words
+     * @param sentences Pre-calculated sentences
+     * @param charCount Total character count
      * @returns Dictionary of linguistic features
      */
-    extractLinguisticFeatures(text: string): FeatureMap {
+    extractLinguisticFeatures(
+        text: string, // Keep text param if needed
+        words: string[],
+        sentences: string[],
+        charCount: number
+    ): FeatureMap {
         const features: FeatureMap = {};
-        
-        // Calculate lexical richness (Moving-Average Type-Token Ratio)
-        features.lexical_richness = this.calculateMATTR(text);
-        
-        // Calculate readability (Flesch Reading Ease)
-        features.readability = this.calculateFleschReadingEase(text);
-        
+        const wordCount = words.length;
+
+        // 1. Lexical Diversity
+        features.ttr = TextStatistics.calculateTTR(words); // Type-Token Ratio
+        features.mattr = TextStatistics.calculateMATTR(words, this.windowSize); // Moving Average TTR
+
+        // 2. Word Length Statistics
+        const wordLengths = words.map(w => w.length);
+        features.mean_word_length = TextStatistics.mean(wordLengths);
+        features.stdev_word_length = TextStatistics.standardDeviation(wordLengths);
+
+        // 3. Syllable Statistics (using approximate syllable counter)
+        const syllablesPerWord = words.map(w => TextStatistics.countSyllables(w));
+        features.mean_syllables_per_word = TextStatistics.mean(syllablesPerWord);
+        features.stdev_syllables_per_word = TextStatistics.standardDeviation(syllablesPerWord);
+
+        // 4. Character Frequency (relative to total characters)
+        features.char_freq = charCount > 0 ? wordCount / charCount : 0; // Ratio of word chars to total chars (approx)
+
+        // 5. Readability Scores (Example: Flesch Reading Ease - requires syllable counts)
+        // Flesch Reading Ease = 206.835 - 1.015 * (total words / total sentences) - 84.6 * (total syllables / total words)
+        const avgWordsPerSentence = features.mean_words_per_sentence || TextStatistics.mean(sentences.map(s => TextStatistics.getWords(s).length));
+        const avgSyllablesPerWord = features.mean_syllables_per_word || TextStatistics.mean(words.map(w => TextStatistics.countSyllables(w)));
+
+        if (avgWordsPerSentence > 0 && avgSyllablesPerWord > 0) {
+            features.flesch_reading_ease = 206.835 - 1.015 * avgWordsPerSentence - 84.6 * avgSyllablesPerWord;
+        } else {
+            features.flesch_reading_ease = 0; // Assign default if calculation isn't possible
+        }
+
+        // Add more features: function word frequency, POS tag frequencies, etc. if needed
+
         return features;
     }
-    
-    /**
-     * Calculate the Moving-Average Type-Token Ratio (MATTR) as described in
-     * Covington & McFall (2010)
-     * 
-     * @param text Input text to analyze
-     * @returns MATTR score
-     */
-    private calculateMATTR(text: string): number {
-        const words = text.toLowerCase().split(/\s+/).filter(w => w.trim().length > 0);
-        
-        // If we don't have enough words for the window, use the standard TTR
-        if (words.length <= this.windowSize) {
-            if (!words.length) return 0;
-            const uniqueWords = new Set(words);
-            return uniqueWords.size / words.length;
-        }
-        
-        // Calculate the average TTR over sliding windows
-        const ttrs: number[] = [];
-        for (let i = 0; i <= words.length - this.windowSize; i++) {
-            const window = words.slice(i, i + this.windowSize);
-            const uniqueWords = new Set(window);
-            const ttr = uniqueWords.size / this.windowSize;
-            ttrs.push(ttr);
-        }
-        
-        return TextStatistics.mean(ttrs);
-    }
-    
-    /**
-     * Calculate the Flesch Reading Ease score as described in Kincaid et al. (1975)
-     * 
-     * @param text Input text to analyze
-     * @returns Flesch Reading Ease score (0-100 scale)
-     */
-    private calculateFleschReadingEase(text: string): number {
-        // Count sentences
-        const sentences = TextStatistics.getSentences(text);
-        const sentenceCount = sentences.length;
-        
-        // Count words
-        const words = TextStatistics.getWords(text);
-        const wordCount = words.length;
-        
-        // Count syllables
-        const syllableCount = words.reduce((count, word) => 
-            count + TextStatistics.countSyllables(word), 0);
-        
-        // Avoid division by zero
-        if (sentenceCount === 0 || wordCount === 0) {
-            return 0;
-        }
-        
-        // Calculate Flesch Reading Ease score
-        const score = 206.835 - 1.015 * (wordCount / sentenceCount) - 84.6 * (syllableCount / wordCount);
-        
-        // Clamp to 0-100 range
-        return Math.max(0, Math.min(100, score));
-    }
 }
 
-/**
- * Interface for timeline features analysis
- */
-export interface TimelineFeatures {
-    features: FeatureMap[];
-    positions: number[];
-}
+// Example Usage (Optional)
+/*
+const extractor = new StyleFeatureExtractor();
+const sampleText = `
+This is the first paragraph. It has two sentences.
 
-/**
- * Implementation of Stylometric Change Point Agreement (StyloCPA) detector
- * based on Kumarage et al. (2023)
- */
-export class StyloCPADetector {
-    private featureExtractor: StyleFeatureExtractor;
-    private agreementThreshold: number;
-    
-    /**
-     * Initialize the StyloCPA detector
-     * 
-     * @param agreementThreshold Percentage of features that must agree on a change point
-     *                          (γ in the paper, default 0.15)
-     */
-    constructor(agreementThreshold: number = 0.15) {
-        this.featureExtractor = new StyleFeatureExtractor();
-        this.agreementThreshold = agreementThreshold;
-    }
-    
-    /**
-     * Extract features for each text in a timeline
-     * 
-     * @param timeline List of text samples in chronological order
-     * @returns Matrix of feature values and positions
-     */
-    extractTimelineFeatures(timeline: string[]): TimelineFeatures {
-        const features: FeatureMap[] = [];
-        const positions: number[] = [];
-        
-        // Extract features for each text
-        for (let i = 0; i < timeline.length; i++) {
-            const text = timeline[i];
-            const textFeatures = this.featureExtractor.extractAllFeatures(text);
-            features.push(textFeatures);
-            positions.push(i);
-        }
-        
-        return { features, positions };
-    }
-    
-    /**
-     * Detect if and where an author change occurs in a timeline of texts
-     * using simplified change point detection
-     * 
-     * @param timeline List of text samples in chronological order
-     * @returns Object with detection result and change point index
-     */
-    detectAuthorChange(timeline: string[]): { 
-        changeDetected: boolean; 
-        changePoint: number;
-    } {
-        // For a full implementation, this would use a time series change point detection
-        // algorithm like PELT. This is a simplified version that looks for significant
-        // shifts in feature values.
-        
-        if (timeline.length < 3) {
-            return { changeDetected: false, changePoint: -1 };
-        }
-        
-        // Extract features for the timeline
-        const { features } = this.extractTimelineFeatures(timeline);
-        
-        // Compute feature differences between consecutive texts
-        const featureNames = Object.keys(features[0]);
-        const changeScores: number[] = new Array(timeline.length - 1).fill(0);
-        
-        for (let i = 0; i < timeline.length - 1; i++) {
-            let totalDiff = 0;
-            let totalFeatures = 0;
-            
-            for (const feature of featureNames) {
-                const current = features[i][feature];
-                const next = features[i+1][feature];
-                
-                // Skip features with zero values
-                if (current === 0 && next === 0) continue;
-                
-                // Calculate normalized difference
-                const diff = Math.abs(next - current);
-                const avgValue = (Math.abs(current) + Math.abs(next)) / 2;
-                
-                if (avgValue > 0) {
-                    const normalizedDiff = diff / avgValue;
-                    totalDiff += normalizedDiff;
-                    totalFeatures++;
-                }
-            }
-            
-            // Average difference across features
-            changeScores[i] = totalFeatures > 0 ? totalDiff / totalFeatures : 0;
-        }
-        
-        // Find the point with the maximum change score
-        let maxChangeIdx = 0;
-        let maxChangeScore = changeScores[0];
-        
-        for (let i = 1; i < changeScores.length; i++) {
-            if (changeScores[i] > maxChangeScore) {
-                maxChangeScore = changeScores[i];
-                maxChangeIdx = i;
-            }
-        }
-        
-        // Determine if the change is significant (exceeds threshold)
-        // A more sophisticated approach would use a statistical test
-        const changeDetected = maxChangeScore > this.agreementThreshold;
-        
-        return {
-            changeDetected,
-            changePoint: changeDetected ? maxChangeIdx : -1
-        };
-    }
-}
-
-/**
- * Simple classifier for detecting if text is AI-generated
- * based on stylometric features
- */
-export class StyleClassifier {
-    private featureExtractor: StyleFeatureExtractor;
-    private thresholds: FeatureMap;
-    
-    /**
-     * Initialize the classifier
-     */
-    constructor() {
-        this.featureExtractor = new StyleFeatureExtractor();
-        
-        // These thresholds would typically be learned from training data
-        // These are placeholder values for demonstration
-        this.thresholds = {
-            lexical_richness: 0.72,  // Higher in human text
-            readability: 65,         // Usually lower in AI text
-            mean_words_per_sentence: 18, // AI often uses longer sentences
-            stdev_words_per_sentence: 5  // Human text has more variance
-        };
-    }
-    
-    /**
-     * Predict if text is AI-generated using stylometric features
-     * 
-     * @param text Text to analyze
-     * @returns Probability that the text is AI-generated (0-1)
-     */
-    predict(text: string): number {
-        const features = this.featureExtractor.extractAllFeatures(text);
-        let aiScore = 0.5; // Starting with neutral score
-        
-        // Adjust based on lexical richness (higher is more human-like)
-        if (features.lexical_richness < this.thresholds.lexical_richness) {
-            aiScore += 0.1;
-        } else {
-            aiScore -= 0.1;
-        }
-        
-        // Adjust based on readability (extremely high is suspicious)
-        if (features.readability > this.thresholds.readability) {
-            aiScore += 0.1;
-        } else {
-            aiScore -= 0.05;
-        }
-        
-        // Adjust based on sentence length (AI often uses more uniform sentence length)
-        if (features.mean_words_per_sentence > this.thresholds.mean_words_per_sentence) {
-            aiScore += 0.05;
-        }
-        
-        if (features.stdev_words_per_sentence < this.thresholds.stdev_words_per_sentence) {
-            aiScore += 0.15; // Low variance is a strong indicator of AI
-        } else {
-            aiScore -= 0.1;
-        }
-        
-        // Clamp to 0-1 range
-        return Math.max(0, Math.min(1, aiScore));
-    }
-    
-    /**
-     * Classify text as either human or AI-written
-     * 
-     * @param text Text to classify
-     * @param threshold Decision threshold (default 0.6)
-     * @returns Classification result
-     */
-    classify(text: string, threshold: number = 0.6): { 
-        isAiGenerated: boolean; 
-        probability: number;
-        features: FeatureMap;
-    } {
-        const probability = this.predict(text);
-        const features = this.featureExtractor.extractAllFeatures(text);
-        
-        return {
-            isAiGenerated: probability >= threshold,
-            probability,
-            features
-        };
-    }
-}
-
-/**
- * Demonstrate the stylometric detection capabilities
- * 
- * @param humanText Example of known human-written text
- * @param aiText Example of known AI-generated text
- * @param timeline Optional timeline of texts to analyze for author change
- */
-export function demonstrateStylometricDetection(
-    humanText: string, 
-    aiText: string, 
-    timeline?: string[]
-): void {
-    console.log("=== STYLOMETRIC DETECTION DEMO ===");
-    
-    // Create classifier and detector
-    const classifier = new StyleClassifier();
-    const changeDetector = new StyloCPADetector();
-    
-    // Classify human text
-    console.log("\n1. ANALYZING HUMAN TEXT:");
-    console.log("------------------------");
-    const humanResult = classifier.classify(humanText);
-    console.log(`Classification: ${humanResult.isAiGenerated ? 'AI-GENERATED' : 'HUMAN-WRITTEN'}`);
-    console.log(`Probability of being AI-generated: ${(humanResult.probability * 100).toFixed(2)}%`);
-    console.log("Key features:");
-    console.log(`- Lexical richness: ${humanResult.features.lexical_richness.toFixed(3)}`);
-    console.log(`- Readability: ${humanResult.features.readability.toFixed(1)}`);
-    console.log(`- Words per sentence: ${humanResult.features.mean_words_per_sentence.toFixed(1)}`);
-    
-    // Classify AI text
-    console.log("\n2. ANALYZING AI TEXT:");
-    console.log("--------------------");
-    const aiResult = classifier.classify(aiText);
-    console.log(`Classification: ${aiResult.isAiGenerated ? 'AI-GENERATED' : 'HUMAN-WRITTEN'}`);
-    console.log(`Probability of being AI-generated: ${(aiResult.probability * 100).toFixed(2)}%`);
-    console.log("Key features:");
-    console.log(`- Lexical richness: ${aiResult.features.lexical_richness.toFixed(3)}`);
-    console.log(`- Readability: ${aiResult.features.readability.toFixed(1)}`);
-    console.log(`- Words per sentence: ${aiResult.features.mean_words_per_sentence.toFixed(1)}`);
-    
-    // Timeline analysis
-    if (timeline && timeline.length >= 3) {
-        console.log("\n3. TIMELINE ANALYSIS:");
-        console.log("-------------------");
-        const changeResult = changeDetector.detectAuthorChange(timeline);
-        
-        if (changeResult.changeDetected) {
-            console.log(`Author change detected at position ${changeResult.changePoint}`);
-            console.log(`Text at position ${changeResult.changePoint}: "${timeline[changeResult.changePoint].substring(0, 50)}..."`);
-            console.log(`Next text: "${timeline[changeResult.changePoint + 1].substring(0, 50)}..."`);
-        } else {
-            console.log("No author change detected in the timeline");
-        }
-    }
-    
-    console.log("\n=== DEMO COMPLETE ===");
-}
+This is the second paragraph. It's a bit longer and uses some different words, like "utilize" and "demonstrate". It also has three sentences! Is that right? Yes.
+`;
+const allFeatures = extractor.extractAllFeatures(sampleText);
+console.log(allFeatures);
+*/

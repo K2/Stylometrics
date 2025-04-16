@@ -1,61 +1,32 @@
 /**
- * Structural Steganography Module
- * 
- * This module implements high-order linguistic steganography designed to survive
- * transcoding, transformation, and even translation. It works by encoding data at
- * multiple structural levels - from narrative structure to dialogue patterns,
- * paragraph construction, rhetorical devices, and viewpoint shifts.
- * 
+ * Structural Steganography Module (Experimental)
+ *
+ * WARNING: This module implements highly experimental techniques for encoding data
+ * in high-level linguistic structures. These methods are complex, may significantly
+ * alter the meaning or naturalness of the text, and are likely fragile to further
+ * editing or transformation. Use with extreme caution and expect potential failures
+ * in encoding or extraction.
+ *
  * Flow:
  * Content → Split → Multi-level structural encoding → Combine → Output
- *
- * Design Philosophy:
- * While zero-width and stylometric encoding focus on character-level and sentence-level
- * features, structural encoding creates patterns across larger content units that are
- * more likely to be preserved even when the specific words change.
  */
 
-import crypto from 'crypto';
+import crypto from 'crypto'; // Not used currently, but kept
+import assert from 'assert';
 
 /**
  * Configuration for the structural encoding process
  */
 interface StructuralEncodingOptions {
-  // Minimum length of content required for effective encoding
   minContentLength: number;
-  
-  // Maximum bits to encode (based on available content structures)
   maxEncodableBits: number;
-  
-  // Whether to attempt to preserve existing structure where possible
-  preserveExistingStructure: boolean;
-  
-  // Level of encoding aggressiveness (higher = more transformations, more noticeable)
+  preserveExistingStructure: boolean; // Note: Currently has limited effect
   encodingStrength: 'subtle' | 'moderate' | 'aggressive';
 }
 
-/**
- * Represents various narrative structures for encoding
- */
-interface NarrativePatterns {
-  // First-person narrative patterns
-  firstPerson: string[];
-  
-  // Third-person narrative patterns
-  thirdPerson: string[];
-  
-  // Dialogue-heavy patterns
-  dialogue: string[];
-  
-  // Descriptive passage patterns
-  descriptive: string[];
-}
-
-/**
- * Maps encoding bit patterns to narrative structures and devices
- */
+// --- Interfaces and Enums (Keep as is) ---
+interface NarrativePatterns { firstPerson: string[]; thirdPerson: string[]; dialogue: string[]; descriptive: string[]; }
 const NARRATIVE_PATTERNS: NarrativePatterns = {
-  // First-person narrative patterns (bit 0)
   firstPerson: [
     "I remember when",
     "As I considered",
@@ -63,8 +34,6 @@ const NARRATIVE_PATTERNS: NarrativePatterns = {
     "Looking back, I realized",
     "From my perspective"
   ],
-  
-  // Third-person narrative patterns (bit 1)
   thirdPerson: [
     "They observed that",
     "From their viewpoint",
@@ -72,16 +41,12 @@ const NARRATIVE_PATTERNS: NarrativePatterns = {
     "After consideration, she decided",
     "He recognized the pattern"
   ],
-  
-  // Dialogue patterns for bits (alternating speakers = 0, same speaker = 1)
   dialogue: [
     '"I see your point," she said. "Tell me more about that approach."',
     '"Consider the implications," he suggested. "What happens when we apply this further?"',
     '"That\'s interesting. And what about the alternative?" they asked.',
     '"This reveals something important. We should examine it carefully," noted the researcher.'
   ],
-  
-  // Descriptive passage patterns (concrete = 0, abstract = 1)
   descriptive: [
     "The structure stood thirty feet tall, metal beams intersecting at precise angles.",
     "Connections between concepts formed gradually, like a photograph developing.",
@@ -89,768 +54,491 @@ const NARRATIVE_PATTERNS: NarrativePatterns = {
     "Ideas floated through the discussion, nebulous at first, then crystallizing."
   ]
 };
-
-/**
- * Paragraph structure encoding patterns
- */
-enum ParagraphPattern {
-  // Short-long alternating paragraphs (bit 0)
-  ShortLongAlternating = 0,
-  
-  // Consistent medium-length paragraphs (bit 1)
-  ConsistentMedium = 1,
-  
-  // Decreasing length paragraphs (bit 0)
-  DecreasingLength = 0,
-  
-  // Increasing length paragraphs (bit 1)
-  IncreasingLength = 1
-}
-
-/**
- * Rhetorical device encoding patterns
- */
-enum RhetoricalPattern {
-  // Question at paragraph end (bit 0)
-  EndingQuestion = 0,
-  
-  // Statement with emphasis at paragraph end (bit 1)
-  EndingEmphasis = 1,
-  
-  // Metaphorical language (bit 0)
-  Metaphorical = 0,
-  
-  // Direct language (bit 1)
-  Direct = 1,
-  
-  // Supporting example after claim (bit 0)
-  ClaimThenExample = 0,
-  
-  // Example followed by conclusion (bit 1)
-  ExampleThenClaim = 1
-}
-
-/**
- * Analysis results for a content unit (paragraph, section, etc.)
- */
-interface ContentUnitAnalysis {
-  wordCount: number;
-  sentenceCount: number;
-  averageSentenceLength: number;
-  complexity: number; // Measure of linguistic complexity
-  pov: 'first' | 'second' | 'third' | 'mixed';
-  tense: 'past' | 'present' | 'future' | 'mixed';
-  rhetorical: RhetoricalPattern[];
-  dialectic: 'argumentative' | 'descriptive' | 'narrative' | 'mixed';
-}
+enum ParagraphPattern { ShortLongAlternating = 0, ConsistentMedium = 1, DecreasingLength = 0, IncreasingLength = 1 }
+enum RhetoricalPattern { EndingQuestion = 0, EndingEmphasis = 1, Metaphorical = 0, Direct = 1, ClaimThenExample = 0, ExampleThenClaim = 1 }
+interface ContentUnitAnalysis { wordCount: number; sentenceCount: number; averageSentenceLength: number; complexity: number; pov: 'first' | 'second' | 'third' | 'mixed'; tense: 'past' | 'present' | 'future' | 'mixed'; rhetorical: RhetoricalPattern[]; dialectic: 'argumentative' | 'descriptive' | 'narrative' | 'mixed'; }
+// --- End Interfaces and Enums ---
 
 /**
  * Default options for structural encoding
  */
 const DEFAULT_OPTIONS: StructuralEncodingOptions = {
-  minContentLength: 1000,
-  maxEncodableBits: 64,
-  preserveExistingStructure: true,
+  minContentLength: 1000, // Requires substantial text
+  maxEncodableBits: 64,   // Limited capacity
+  preserveExistingStructure: true, // Attempt, but transformations are intrusive
   encodingStrength: 'moderate'
 };
 
+// Simple sentence splitter
+const splitSentences = (text: string): string[] => {
+    // Improved regex to handle more sentence endings and avoid splitting URLs etc.
+    // It's still basic and won't handle all edge cases perfectly.
+    return text.match(/([^\.!\?]+[\.!\?])(?=\s+[A-Z]|$)/g) || [text];
+};
+
+// Simple word splitter
+const splitWords = (text: string): string[] => {
+    return text.match(/\b\w+\b/g) || []; // Use regex to get only words
+};
+
 /**
- * Analyzes a section of text to determine its structural characteristics
+ * Analyzes a section of text to determine its structural characteristics (Simplified)
  * @param text Content to analyze
  * @returns Analysis of content structure
  */
 const analyzeContentUnit = (text: string): ContentUnitAnalysis => {
-  // Split into sentences
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-  
-  // Count words
-  const words = text.split(/\s+/).filter(w => w.length > 0);
-  
-  // Detect point of view
+  const sentences = splitSentences(text);
+  const words = splitWords(text);
+  const wordCount = words.length;
+  const sentenceCount = sentences.length;
+
+  // --- POV Detection (Simplified) ---
   const firstPersonIndicators = text.match(/\b(I|me|my|mine|myself)\b/gi) || [];
   const secondPersonIndicators = text.match(/\b(you|your|yours|yourself)\b/gi) || [];
-  const thirdPersonIndicators = text.match(/\b(he|she|it|they|him|her|them|his|hers|their|theirs)\b/gi) || [];
-  
-  let pov: 'first' | 'second' | 'third' | 'mixed' = 'mixed';
-  
-  // Determine dominant POV
-  const povCounts = [
-    firstPersonIndicators.length,
-    secondPersonIndicators.length,
-    thirdPersonIndicators.length
-  ];
-  const maxPovCount = Math.max(...povCounts);
-  
-  if (maxPovCount > 0 && maxPovCount >= 2 * (povCounts.reduce((a, b) => a + b, 0) - maxPovCount)) {
-    // If one POV is at least twice as frequent as all others combined
-    if (povCounts[0] === maxPovCount) pov = 'first';
-    else if (povCounts[1] === maxPovCount) pov = 'second';
-    else pov = 'third';
+  const thirdPersonIndicators = text.match(/\b(he|she|it|they|him|her|them|his|hers|their|theirs)\b/i) || []; // Case insensitive for third person
+  let pov: ContentUnitAnalysis['pov'] = 'mixed';
+  const povCounts = [firstPersonIndicators.length, secondPersonIndicators.length, thirdPersonIndicators.length];
+  const totalPov = povCounts.reduce((a, b) => a + b, 0);
+  if (totalPov > 5) { // Require a minimum number of indicators
+      if (firstPersonIndicators.length / totalPov > 0.7) pov = 'first';
+      else if (secondPersonIndicators.length / totalPov > 0.7) pov = 'second';
+      else if (thirdPersonIndicators.length / totalPov > 0.7) pov = 'third';
   }
-  
-  // Detect tense (simplified)
-  const pastTenseIndicators = text.match(/\b(\w+ed|was|were|had)\b/gi) || [];
-  const presentTenseIndicators = text.match(/\b(is|are|am|being)\b/gi) || [];
+  // --- End POV ---
+
+  // --- Tense Detection (Simplified) ---
+  const pastTenseIndicators = text.match(/\b(\w+ed|was|were|had|went|saw|did)\b/gi) || [];
+  const presentTenseIndicators = text.match(/\b(is|are|am|being|has|have|go|see|do|does)\b/gi) || []; // Added more verbs
   const futureTenseIndicators = text.match(/\b(will|shall|going to)\b/gi) || [];
-  
-  let tense: 'past' | 'present' | 'future' | 'mixed' = 'mixed';
-  
-  // Determine dominant tense
-  const tenseCounts = [
-    pastTenseIndicators.length,
-    presentTenseIndicators.length,
-    futureTenseIndicators.length
-  ];
-  const maxTenseCount = Math.max(...tenseCounts);
-  
-  if (maxTenseCount > 0 && maxTenseCount >= 2 * (tenseCounts.reduce((a, b) => a + b, 0) - maxTenseCount)) {
-    // If one tense is at least twice as frequent as all others combined
-    if (tenseCounts[0] === maxTenseCount) tense = 'past';
-    else if (tenseCounts[1] === maxTenseCount) tense = 'present';
-    else tense = 'future';
-  }
-  
-  // Detect rhetorical patterns
+  let tense: ContentUnitAnalysis['tense'] = 'mixed';
+   const tenseCounts = [pastTenseIndicators.length, presentTenseIndicators.length, futureTenseIndicators.length];
+   const totalTense = tenseCounts.reduce((a, b) => a + b, 0);
+   if (totalTense > 5) { // Require minimum indicators
+       if (pastTenseIndicators.length / totalTense > 0.7) tense = 'past';
+       else if (presentTenseIndicators.length / totalTense > 0.7) tense = 'present';
+       else if (futureTenseIndicators.length / totalTense > 0.7) tense = 'future';
+   }
+  // --- End Tense ---
+
+  // --- Rhetorical Pattern Detection (Simplified) ---
   const rhetorical: RhetoricalPattern[] = [];
-  
-  // Check for questions at paragraph end
-  if (sentences.length > 0 && sentences[sentences.length - 1].trim().endsWith('?')) {
-    rhetorical.push(RhetoricalPattern.EndingQuestion);
-  } else {
-    // Check for emphasis (!, strong statements) at paragraph end
-    if (sentences.length > 0 && 
-        (sentences[sentences.length - 1].trim().endsWith('!') ||
-         sentences[sentences.length - 1].match(/\b(certainly|definitely|absolutely|crucial|essential|critical)\b/i))) {
-      rhetorical.push(RhetoricalPattern.EndingEmphasis);
-    }
-  }
-  
-  // Check for metaphorical language
-  const metaphorIndicators = text.match(/\b(like|as if|as though|resembles|similar to)\b/gi) || [];
-  if (metaphorIndicators.length > 0) {
-    rhetorical.push(RhetoricalPattern.Metaphorical);
-  } else {
-    rhetorical.push(RhetoricalPattern.Direct);
-  }
-  
-  // Detect dialectic structure (simplified)
-  const argumentativeIndicators = text.match(/\b(because|therefore|thus|hence|so|consequently)\b/gi) || [];
-  const descriptiveIndicators = text.match(/\b(appears|looks|seems|features|contains|consists)\b/gi) || [];
-  const narrativeIndicators = text.match(/\b(then|next|after|before|finally|eventually)\b/gi) || [];
-  
-  let dialectic: 'argumentative' | 'descriptive' | 'narrative' | 'mixed' = 'mixed';
-  
-  // Determine dominant dialectic
-  const dialecticCounts = [
-    argumentativeIndicators.length,
-    descriptiveIndicators.length,
-    narrativeIndicators.length
-  ];
-  const maxDialecticCount = Math.max(...dialecticCounts);
-  
-  if (maxDialecticCount > 0 && maxDialecticCount > dialecticCounts.reduce((a, b) => a + b, 0) / 2) {
-    // If one dialectic form is more than half the total
-    if (dialecticCounts[0] === maxDialecticCount) dialectic = 'argumentative';
-    else if (dialecticCounts[1] === maxDialecticCount) dialectic = 'descriptive';
-    else dialectic = 'narrative';
-  }
-  
-  // Calculate complexity (simple heuristic based on sentence length and vocabulary diversity)
+  const lastSentence = sentences[sentenceCount - 1]?.trim() || '';
+  if (lastSentence.endsWith('?')) rhetorical.push(RhetoricalPattern.EndingQuestion);
+  else if (lastSentence.endsWith('!') || lastSentence.match(/\b(must|indeed|clearly|crucial|essential|vital|paramount)\b/i)) rhetorical.push(RhetoricalPattern.EndingEmphasis); // Expanded emphasis check
+
+  const metaphorIndicators = text.match(/\b(like|as if|as though|resembles|similar to|metaphor for|akin to)\b/gi) || [];
+  if (metaphorIndicators.length > 1) rhetorical.push(RhetoricalPattern.Metaphorical); // Require more than one indicator
+  else rhetorical.push(RhetoricalPattern.Direct); // Assume direct if no clear metaphor indicators
+
+  // Simplified claim/example order check (very basic)
+  const firstSentence = sentences[0]?.trim() || '';
+  const exampleKeywords = /\b(example|instance|consider|illustrate|case in point)\b/i;
+  if (exampleKeywords.test(firstSentence) && !exampleKeywords.test(lastSentence)) rhetorical.push(RhetoricalPattern.ExampleThenClaim);
+  else if (!exampleKeywords.test(firstSentence) && exampleKeywords.test(lastSentence)) rhetorical.push(RhetoricalPattern.ClaimThenExample);
+  else rhetorical.push(RhetoricalPattern.ClaimThenExample); // Default assumption if unclear
+  // --- End Rhetorical ---
+
+  // --- Dialectic Detection (Simplified) ---
+  const argumentativeIndicators = text.match(/\b(because|therefore|thus|hence|so|consequently|however|but|although|yet|since|as a result)\b/gi) || [];
+  const descriptiveIndicators = text.match(/\b(appears|looks|seems|features|contains|consists|is|are|has|have|includes|measures|weighs)\b/gi) || [];
+  const narrativeIndicators = text.match(/\b(then|next|after|before|finally|eventually|when|while|suddenly|later|meanwhile)\b/gi) || [];
+  let dialectic: ContentUnitAnalysis['dialectic'] = 'mixed';
+   const dialecticCounts = [argumentativeIndicators.length, descriptiveIndicators.length, narrativeIndicators.length];
+   const totalDialectic = dialecticCounts.reduce((a, b) => a + b, 0);
+   if (totalDialectic > 5) { // Require minimum indicators
+       if (argumentativeIndicators.length / totalDialectic > 0.6) dialectic = 'argumentative';
+       else if (descriptiveIndicators.length / totalDialectic > 0.6) dialectic = 'descriptive';
+       else if (narrativeIndicators.length / totalDialectic > 0.6) dialectic = 'narrative';
+   }
+  // --- End Dialectic ---
+
+  // --- Complexity (Simple Heuristic) ---
   const uniqueWords = new Set(words.map(w => w.toLowerCase()));
-  const lexicalDiversity = uniqueWords.size / words.length;
-  const complexity = (sentences.length > 0 ? words.length / sentences.length : 0) * lexicalDiversity * 10;
-  
+  const lexicalDiversity = wordCount > 0 ? uniqueWords.size / wordCount : 0;
+  const avgSentenceLength = sentenceCount > 0 ? wordCount / sentenceCount : 0;
+  // Normalize complexity score (e.g., to 0-1 range, very roughly)
+  const complexity = Math.min(1, (avgSentenceLength / 30) * lexicalDiversity * 2); // Adjusted formula
+  // --- End Complexity ---
+
   return {
-    wordCount: words.length,
-    sentenceCount: sentences.length,
-    averageSentenceLength: sentences.length > 0 ? words.length / sentences.length : 0,
-    complexity,
-    pov,
-    tense,
-    rhetorical,
-    dialectic
+    wordCount, sentenceCount, averageSentenceLength: avgSentenceLength,
+    complexity, pov, tense, rhetorical, dialectic
   };
 };
 
 /**
- * Splits content into workable structural units (paragraphs, sections)
+ * Splits content into workable structural units (paragraphs)
  * @param content Full text content
- * @returns Array of content units
+ * @returns Array of content units (paragraphs)
  */
 const splitContentIntoUnits = (content: string): string[] => {
-  // Split by double line break to get paragraphs
-  const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0);
-  
-  // If we have very few paragraphs, try to split further by sentences
-  if (paragraphs.length < 5) {
-    // Create more units by grouping sentences
-    const allSentences = content.match(/[^.!?]+[.!?]+/g) || [];
-    
-    // Group sentences into units of 2-4 sentences
-    const units: string[] = [];
-    let currentUnit = '';
-    let sentenceCount = 0;
-    
-    for (const sentence of allSentences) {
-      currentUnit += sentence;
-      sentenceCount++;
-      
-      if (sentenceCount >= 3 || currentUnit.length > 200) {
-        units.push(currentUnit);
-        currentUnit = '';
-        sentenceCount = 0;
-      }
-    }
-    
-    if (currentUnit.length > 0) {
-      units.push(currentUnit);
-    }
-    
-    return units;
-  }
-  
-  return paragraphs;
+  // Split by one or more empty lines to get paragraphs, trim, and filter empty
+  return content.split(/\n\s*\n+/).map(p => p.trim()).filter(p => p.length > 0);
 };
 
 /**
- * Transforms content structure to encode a bit
- * @param contentUnit Text unit to transform
- * @param bit Bit to encode (0 or 1)
- * @param options Encoding options
- * @returns Transformed content unit
+ * Hides data by modifying paragraph structure (splitting/merging).
+ * Bit = 1: Try to merge current paragraph with next (if both are short).
+ * Bit = 0: Try to split current paragraph (if long enough).
+ * @param originalText The text content.
+ * @param bitsToEncode Array of boolean bits to encode.
+ * @param strength 'subtle' (few changes), 'moderate', 'aggressive' (more changes). Not fully implemented yet, acts like 'moderate'.
+ * @param preserveExistingStructure Attempt to avoid major structural changes (e.g., headings). Basic implementation.
+ * @returns Modified text with embedded bits and count of bits encoded.
  */
-const transformContentStructure = (
-  contentUnit: string, 
-  bit: number,
-  options: StructuralEncodingOptions
-): string => {
-  // Analyze the content unit first
-  const analysis = analyzeContentUnit(contentUnit);
-  
-  // Choose transformation strategy based on unit characteristics
-  let transformed = contentUnit;
-  
-  // Apply transformation based on encoding strength
-  if (options.encodingStrength === 'aggressive') {
-    // Apply multiple transformations
-    transformed = transformPointOfView(transformed, bit);
-    transformed = transformRhetoricalStructure(transformed, bit, analysis);
-    transformed = transformTense(transformed, bit);
-  } else if (options.encodingStrength === 'moderate') {
-    // Apply 1-2 transformations
-    if (contentUnit.length > 150) {
-      transformed = transformPointOfView(transformed, bit);
-    }
-    transformed = transformRhetoricalStructure(transformed, bit, analysis);
-  } else {
-    // Subtle - apply minimal transformations
-    transformed = transformRhetoricalStructure(transformed, bit, analysis);
-  }
-  
-  return transformed;
-};
+function encodeStructuralBits(
+    originalText: string,
+    bitsToEncode: boolean[],
+    strength: 'subtle' | 'moderate' | 'aggressive' = 'moderate',
+    preserveExistingStructure: boolean = true
+): { modifiedText: string; bitsEncoded: number } {
+    assert(originalText != null, '[encodeStructuralBits] Input text cannot be null.');
+    assert(bitsToEncode != null, '[encodeStructuralBits] Input bits cannot be null.');
 
-/**
- * Transforms the point of view to encode a bit
- * @param text Content to transform
- * @param bit Bit to encode (0 or 1)
- * @returns Transformed text
- */
-const transformPointOfView = (text: string, bit: number): string => {
-  // For bit 0, prefer first-person narrative
-  // For bit 1, prefer third-person narrative
-  if (bit === 0) {
-    // Choose a random first-person pattern to inject or enhance
-    const pattern = NARRATIVE_PATTERNS.firstPerson[
-      Math.floor(Math.random() * NARRATIVE_PATTERNS.firstPerson.length)
-    ];
-    
-    if (!text.match(/\b(I|me|my|mine|myself)\b/i)) {
-      // No first person markers found, insert the pattern
-      const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-      if (sentences.length > 0) {
-        // Insert at beginning or replace first sentence
-        return `${pattern} ${text.replace(sentences[0], '')}`;
-      }
-    } else {
-      // Already has first person, enhance it
-      return text;
+    const paragraphs = splitContentIntoUnits(originalText); // Use refined splitter
+    if (paragraphs.length < 2) {
+        console.warn("[encodeStructuralBits] Insufficient paragraphs (< 2) for structural encoding.");
+        return { modifiedText: originalText, bitsEncoded: 0 };
     }
-  } else { // bit === 1
-    // Choose a random third-person pattern to inject or enhance
-    const pattern = NARRATIVE_PATTERNS.thirdPerson[
-      Math.floor(Math.random() * NARRATIVE_PATTERNS.thirdPerson.length)
-    ];
-    
-    if (!text.match(/\b(he|she|it|they|him|her|them|his|hers|their|theirs)\b/i)) {
-      // No third person markers found, insert the pattern
-      const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-      if (sentences.length > 0) {
-        // Insert at beginning or replace first sentence
-        return `${pattern} ${text.replace(sentences[0], '')}`;
-      }
-    } else {
-      // Already has third person, enhance it
-      return text;
-    }
-  }
-  
-  return text;
-};
 
-/**
- * Transforms the tense to encode a bit
- * @param text Content to transform
- * @param bit Bit to encode (0 or 1)
- * @returns Transformed text
- */
-const transformTense = (text: string, bit: number): string => {
-  // Simple tense transformation - doesn't actually change all verbs,
-  // just introduces tense indicators
-  if (bit === 0) {
-    // Introduce past tense indicators
-    if (!text.match(/\b(had|was|were|previously|earlier|before|yesterday)\b/i)) {
-      return text.replace(/\. /, '. Previously, ');
-    }
-  } else {
-    // Introduce future tense indicators
-    if (!text.match(/\b(will|shall|going to|soon|eventually|tomorrow)\b/i)) {
-      return text.replace(/\. /, '. Eventually, ');
-    }
-  }
-  
-  return text;
-};
+    let modifiedParagraphs: string[] = [];
+    let bitIndex = 0;
+    let i = 0;
 
-/**
- * Transforms the rhetorical structure to encode a bit
- * @param text Content to transform
- * @param bit Bit to encode (0 or 1)
- * @param analysis Analysis of the content
- * @returns Transformed text
- */
-const transformRhetoricalStructure = (
-  text: string, 
-  bit: number, 
-  analysis: ContentUnitAnalysis
-): string => {
-  // Get last sentence
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-  if (sentences.length === 0) return text;
-  
-  const lastSentence = sentences[sentences.length - 1];
-  let transformed = text;
-  
-  if (bit === 0) {
-    // Bit 0: End with a question if not already
-    if (!lastSentence.trim().endsWith('?')) {
-      // Remove last sentence and add a question
-      transformed = text.substring(0, text.length - lastSentence.length);
-      
-      // Create a question based on the content of the last sentence
-      if (lastSentence.match(/\b(is|are|was|were|will|should|could|would|can)\b/i)) {
-        // Convert to question by moving verb
-        const questionForm = lastSentence.replace(/\b((\w+)\s+(is|are|was|were|will|should|could|would|can))\b/i, 
-          (match, p1, p2, verb) => `${verb} ${p2}`);
-        transformed += questionForm;
-      } else {
-        // Add a generic question
-        transformed += `Might we consider how ${lastSentence.trim().replace(/[.!]+$/, '?')}`;
-      }
-    }
-  } else {
-    // Bit 1: End with emphasis or strong statement if not already
-    if (!lastSentence.trim().endsWith('!') && 
-        !lastSentence.match(/\b(certainly|definitely|absolutely|crucial|essential|critical)\b/i)) {
-      // Remove last sentence and add an emphatic statement
-      transformed = text.substring(0, text.length - lastSentence.length);
-      transformed += lastSentence.trim().replace(/[.?]+$/, '!');
-    }
-  }
-  
-  return transformed;
-};
+    // Adjust thresholds based on strength (example)
+    const strengthMultiplier = strength === 'subtle' ? 1.5 : (strength === 'aggressive' ? 0.7 : 1.0);
+    const MIN_PARA_LEN_SPLIT = 150 * strengthMultiplier; // Higher threshold for subtle, lower for aggressive
+    const MAX_PARA_LEN_MERGE = 100 / strengthMultiplier; // Lower threshold for subtle, higher for aggressive
+    const HEADING_REGEX = /^(#+|\*+|\-+|\d+\.\s)/; // Basic check for headings or list items
 
-/**
- * Transforms paragraph length patterns to encode bits
- * @param contentUnits Array of content units
- * @param bitsToEncode Bits to encode
- * @param options Encoding options
- * @returns Transformed content units
- */
-const transformParagraphPatterns = (
-  contentUnits: string[], 
-  bitsToEncode: string, 
-  options: StructuralEncodingOptions
-): string[] => {
-  // If not enough units, return unchanged
-  if (contentUnits.length < 4) return contentUnits;
-  
-  let bitIndex = 0;
-  const transformed: string[] = [];
-  
-  // Group units into sections of 3-4 units each
-  for (let i = 0; i < contentUnits.length && bitIndex < bitsToEncode.length; i += 4) {
-    const section = contentUnits.slice(i, Math.min(i + 4, contentUnits.length));
-    
-    if (section.length >= 3) {
-      const bit = parseInt(bitsToEncode[bitIndex], 10);
-      
-      // Apply paragraph length pattern
-      if (bit === 0) {
-        // Alternating short-long paragraphs for bit 0
-        for (let j = 0; j < section.length; j++) {
-          if (j % 2 === 0) {
-            // Make paragraph shorter
-            transformed.push(makeParagraphShorter(section[j]));
-          } else {
-            // Make paragraph longer
-            transformed.push(makeParagraphLonger(section[j]));
-          }
+    while (i < paragraphs.length && bitIndex < bitsToEncode.length) {
+        const currentPara = paragraphs[i]; // Already trimmed by splitContentIntoUnits
+        const nextPara = (i + 1 < paragraphs.length) ? paragraphs[i + 1] : null;
+
+        // Skip headings or list items if preserving structure
+        if (preserveExistingStructure && HEADING_REGEX.test(currentPara)) {
+             modifiedParagraphs.push(currentPara);
+             i++;
+             continue;
         }
-      } else {
-        // Consistent medium-length paragraphs for bit 1
-        for (let j = 0; j < section.length; j++) {
-          transformed.push(makeParagraphMedium(section[j]));
-        }
-      }
-      
-      bitIndex++;
-    } else {
-      // Not enough paragraphs in this section, keep unchanged
-      transformed.push(...section);
-    }
-  }
-  
-  // Add any remaining units unchanged
-  if (contentUnits.length > transformed.length) {
-    transformed.push(...contentUnits.slice(transformed.length));
-  }
-  
-  return transformed;
-};
 
-/**
- * Makes a paragraph shorter by removing details or combining sentences
- * @param paragraph Paragraph to modify
- * @returns Shortened paragraph
- */
-const makeParagraphShorter = (paragraph: string): string => {
-  const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [];
-  
-  if (sentences.length <= 2) return paragraph;
-  
-  // Remove middle sentence(s)
-  return sentences[0] + ' ' + sentences[sentences.length - 1];
-};
+        const bit = bitsToEncode[bitIndex];
+        let appliedChange = false;
 
-/**
- * Makes a paragraph longer by adding descriptions or elaborations
- * @param paragraph Paragraph to modify
- * @returns Lengthened paragraph
- */
-const makeParagraphLonger = (paragraph: string): string => {
-  const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [];
-  
-  if (sentences.length === 0) return paragraph;
-  
-  // Add elaboration sentence
-  const elaborations = [
-    "This illustrates the key principle at work. ",
-    "The implications of this are significant. ",
-    "Several factors contribute to this outcome. ",
-    "This represents an important development. ",
-    "Multiple perspectives can be applied to this situation. "
-  ];
-  
-  const elaboration = elaborations[Math.floor(Math.random() * elaborations.length)];
-  
-  // Insert before the last sentence
-  if (sentences.length > 1) {
-    const lastSentencePos = paragraph.lastIndexOf(sentences[sentences.length - 1]);
-    return paragraph.substring(0, lastSentencePos) + elaboration + paragraph.substring(lastSentencePos);
-  } else {
-    return paragraph + ' ' + elaboration;
-  }
-};
+        // Try merging (Bit = 1)
+        if (bit && nextPara && currentPara.length < MAX_PARA_LEN_MERGE && nextPara.length < MAX_PARA_LEN_MERGE && (!preserveExistingStructure || !HEADING_REGEX.test(nextPara))) {
+            // Merge with a single space, assuming paragraphs end without punctuation needing removal
+            modifiedParagraphs.push(`${currentPara} ${nextPara}`);
+            i += 2; // Skip next paragraph as it's merged
+            bitIndex++;
+            appliedChange = true;
+        // Try splitting (Bit = 0)
+        } else if (!bit && currentPara.length >= MIN_PARA_LEN_SPLIT) {
+            const sentences = splitSentences(currentPara); // Use refined splitter
+            if (sentences && sentences.length > 1) {
+                // Find a split point roughly in the middle, preferring after a sentence end
+                let splitPoint = Math.floor(sentences.length / 2);
+                // Ensure split point is not 0
+                splitPoint = Math.max(1, splitPoint);
 
-/**
- * Adjusts a paragraph to be medium length
- * @param paragraph Paragraph to modify
- * @returns Medium-length paragraph
- */
-const makeParagraphMedium = (paragraph: string): string => {
-  const sentences = paragraph.match(/[^.!?]+[.!?]+/g) || [];
-  
-  if (sentences.length === 0) return paragraph;
-  
-  if (sentences.length > 3) {
-    // Too long, shorten
-    return sentences.slice(0, 3).join(' ');
-  } else if (sentences.length < 2) {
-    // Too short, expand
-    const elaborations = [
-      "This represents an important consideration. ",
-      "The pattern continues in subsequent examples. "
-    ];
-    
-    return paragraph + ' ' + elaborations[Math.floor(Math.random() * elaborations.length)];
-  }
-  
-  return paragraph;
-};
+                let para1 = sentences.slice(0, splitPoint).join(' ').trim();
+                let para2 = sentences.slice(splitPoint).join(' ').trim();
 
-/**
- * Encodes data using multi-level structural patterns
- * @param text Text to encode data within
- * @param dataToHide Data to encode
- * @param options Encoding configuration
- * @returns Text with structurally encoded data
- */
-export const hideDataStructurally = (
-  text: string, 
-  dataToHide: string,
-  options: StructuralEncodingOptions = DEFAULT_OPTIONS
-): string => {
-  // Validate content length
-  if (text.length < options.minContentLength) {
-    throw new Error(`Content too short (${text.length} chars) for structural encoding. Minimum required: ${options.minContentLength}`);
-  }
-  
-  // Convert data to binary
-  const binaryData = Array.from(dataToHide)
-      .map(char => char.charCodeAt(0).toString(2).padStart(8, '0'))
-      .join('');
-  
-  // Encode length as 16-bit binary
-  const lengthBinary = binaryData.length.toString(2).padStart(16, '0');
-  
-  // Combine length header and data bits
-  const bitsToEncode = lengthBinary + binaryData;
-  
-  // Validate encoding capacity
-  const maxBits = Math.min(options.maxEncodableBits, bitsToEncode.length);
-  console.log(`Encoding ${maxBits} bits of data structurally`);
-  
-  // Split content into workable units
-  let contentUnits = splitContentIntoUnits(text);
-  
-  // First pass: Transform paragraph patterns
-  contentUnits = transformParagraphPatterns(contentUnits, bitsToEncode.substring(0, Math.min(maxBits, 16)), options);
-  
-  // Second pass: Transform individual units for remaining bits
-  for (let i = 0; i < contentUnits.length && i + 16 < maxBits; i++) {
-    const bitIndex = i + 16;
-    if (bitIndex < bitsToEncode.length) {
-      const bit = parseInt(bitsToEncode[bitIndex], 10);
-      contentUnits[i] = transformContentStructure(contentUnits[i], bit, options);
-    }
-  }
-  
-  // Add structural marker at beginning to aid detection
-  const structuralMarker = "The following explores multiple perspectives. ";
-  
-  // Recombine content
-  return structuralMarker + contentUnits.join('\n\n');
-};
-
-/**
- * Extracts data hidden using structural encoding
- * @param text Text that may contain structurally encoded data
- * @returns Extracted data string or null if none found
- */
-export const extractHiddenStructuralData = (text: string): string | null => {
-  // Check for structural marker
-  if (!text.includes("The following explores multiple perspectives.")) {
-    return null;
-  }
-  
-  // Split into content units
-  const contentUnits = splitContentIntoUnits(text);
-  
-  // Not enough units for encoding
-  if (contentUnits.length < 4) {
-    return null;
-  }
-  
-  let extractedBits = '';
-  
-  // First extract bits from paragraph patterns (first 16 bits)
-  // Group units into sections of 3-4 units each
-  for (let i = 0; i < contentUnits.length && extractedBits.length < 16; i += 4) {
-    const section = contentUnits.slice(i, Math.min(i + 4, contentUnits.length));
-    
-    if (section.length >= 3) {
-      // Analyze pattern
-      let shortLongPattern = true;
-      let consistentLength = true;
-      
-      for (let j = 0; j < section.length - 1; j++) {
-        const currentLength = section[j].length;
-        const nextLength = section[j+1].length;
-        
-        // Check if pattern is short-long alternating
-        if (j % 2 === 0) {
-          if (currentLength >= nextLength) {
-            shortLongPattern = false;
-          }
+                // Avoid creating very short paragraphs if possible
+                if (para1.length > 20 && para2.length > 20) {
+                    modifiedParagraphs.push(para1);
+                    modifiedParagraphs.push(para2);
+                    i++; // Move to next original paragraph index
+                    bitIndex++;
+                    appliedChange = true;
+                } else {
+                     // Split would create tiny paragraphs, skip modification
+                     modifiedParagraphs.push(currentPara);
+                     i++;
+                }
+            } else {
+                 // Not enough sentences to split
+                 modifiedParagraphs.push(currentPara);
+                 i++;
+            }
         } else {
-          if (currentLength <= nextLength) {
-            shortLongPattern = false;
-          }
+            // Condition not met for merge/split, or paragraph skipped
+            modifiedParagraphs.push(currentPara);
+            i++;
         }
-        
-        // Check if consistent length
-        if (Math.abs(currentLength - nextLength) > currentLength * 0.3) {
-          consistentLength = false;
-        }
-      }
-      
-      // Extract bit based on pattern
-      extractedBits += shortLongPattern ? '0' : '1';
     }
-  }
-  
-  // Then extract bits from unit structure
-  for (let i = 0; i < contentUnits.length && extractedBits.length < 64; i++) {
-    const analysis = analyzeContentUnit(contentUnits[i]);
-    
-    // Extract from point of view
-    if (analysis.pov === 'first') {
-      extractedBits += '0';
-    } else if (analysis.pov === 'third') {
-      extractedBits += '1';
-    } else {
-      // Extract from rhetorical structure
-      if (analysis.rhetorical.includes(RhetoricalPattern.EndingQuestion)) {
-        extractedBits += '0';
-      } else if (analysis.rhetorical.includes(RhetoricalPattern.EndingEmphasis)) {
-        extractedBits += '1';
-      } else {
-        // Extract from tense
-        if (analysis.tense === 'past') {
-          extractedBits += '0';
-        } else if (analysis.tense === 'future') {
-          extractedBits += '1';
-        } else {
-          // If we can't determine, use dialectic
-          if (analysis.dialectic === 'narrative') {
-            extractedBits += '0';
-          } else if (analysis.dialectic === 'argumentative') {
-            extractedBits += '1';
-          } else {
-            // As a last resort, use complexity
-            extractedBits += analysis.complexity < 12 ? '0' : '1';
-          }
-        }
-      }
+
+    // Add remaining paragraphs that weren't processed
+    while (i < paragraphs.length) {
+        modifiedParagraphs.push(paragraphs[i]); // Already trimmed
+        i++;
     }
-  }
-  
-  // Check if we have at least 16 bits for the length
-  if (extractedBits.length < 16) {
-    return null;
-  }
-  
-  // Extract length from first 16 bits
-  const lengthBits = extractedBits.substring(0, 16);
-  const dataLength = parseInt(lengthBits, 2);
-  
-  // Ensure we have enough bits
-  if (extractedBits.length < 16 + dataLength) {
-    return null;
-  }
-  
-  // Extract data bits
-  const dataBits = extractedBits.substring(16, 16 + dataLength);
-  
-  // Convert binary to string
-  let result = '';
-  for (let i = 0; i < dataBits.length; i += 8) {
-    const byte = dataBits.substr(i, 8);
-    if (byte.length === 8) {
-      result += String.fromCharCode(parseInt(byte, 2));
-    }
-  }
-  
-  return result;
-};
+
+    // Reconstruct text with double line breaks
+    const modifiedText = modifiedParagraphs.join('\n\n');
+    return { modifiedText, bitsEncoded: bitIndex };
+}
 
 /**
- * Demonstration function to show structural encoding in action
- * @param originalText Sample text to encode
- * @param dataToHide Data to hide within the text
+ * Extracts bits based on paragraph structure.
+ * Assumes merging short paragraphs = 1, splitting long paragraphs = 0.
+ * Highly sensitive to reformatting and ambiguity. Requires original text for reliable extraction.
+ * @param text Text possibly containing structurally encoded data.
+ * @param originalText The original text *before* encoding. Required for reliable extraction.
+ * @returns Array of boolean bits or null if extraction seems invalid or original text is missing.
  */
-export const demonstrateStructuralEncoding = (originalText: string, dataToHide: string): void => {
-  console.log("=== STRUCTURAL STEGANOGRAPHY DEMONSTRATION ===\n");
-  console.log("Original text:");
-  console.log("-".repeat(50));
-  console.log(originalText);
-  console.log("-".repeat(50) + "\n");
-  
-  console.log("Data to hide:", dataToHide);
-  console.log("Data length:", dataToHide.length, "characters");
-  console.log();
-  
-  try {
-    console.log("Encoding data structurally...");
-    const encodedText = hideDataStructurally(originalText, dataToHide);
-    
-    console.log("\nStructurally encoded text:");
-    console.log("-".repeat(50));
-    console.log(encodedText);
-    console.log("-".repeat(50) + "\n");
-    
-    console.log("Original length:", originalText.length, "characters");
-    console.log("Encoded length:", encodedText.length, "characters");
-    console.log("Difference:", encodedText.length - originalText.length, "characters\n");
-    
-    console.log("Attempting to extract hidden data...");
-    const extractedData = extractHiddenStructuralData(encodedText);
-    
-    console.log("\nExtracted data:", extractedData);
-    console.log("Original data:", dataToHide);
-    console.log("Match:", extractedData === dataToHide ? "✓" : "✗");
-    
-    if (extractedData !== dataToHide) {
-      console.log("\nWARNING: Extracted data doesn't match original.");
-      console.log("This could be due to insufficient content structure for reliable encoding.");
+function extractStructuralBits(text: string, originalText?: string): boolean[] | null {
+    assert(text != null, '[extractStructuralBits] Input text cannot be null.');
+
+    if (!originalText) {
+        console.warn("[extractStructuralBits] Original text is required for reliable structural bit extraction. Returning empty array (unreliable).");
+        // Attempting extraction without original is highly unreliable and likely incorrect.
+        // This part would need a complex heuristic comparing paragraph lengths/counts
+        // to guess if splits/merges happened, which is beyond the scope of this example.
+        return []; // Return empty as a placeholder for unreliable extraction
     }
-  } catch (error) {
-    console.error("Error during demonstration:", error);
-  }
-};
 
-// Auto-run demonstration if this file is executed directly
-if (require.main === module) {
-  const sampleText = `
-The development of resilient encoding systems represents a fascinating intersection
-of linguistics, information theory, and cryptography. These systems must account for
-various transformations that content might undergo, from digital transcoding to
-translation between languages.
+    const currentParagraphs = splitContentIntoUnits(text);
+    const originalParagraphs = splitContentIntoUnits(originalText);
 
-When we consider the preservation of metadata across these transformations, we
-must move beyond character-level approaches. Surface-level features are easily
-lost. Instead, we should focus on deep structural patterns that maintain their
-integrity across transformations.
+    const bits: boolean[] = [];
+    let origIdx = 0;
+    let modIdx = 0;
 
-High-order linguistic features such as narrative viewpoint, rhetorical structure,
-and dialectic patterns offer promising avenues. These features typically survive
-translation and transformation because they represent fundamental aspects of
-how information is organized and presented.
+    const HEADING_REGEX = /^(#+|\*+|\-+|\d+\.\s)/;
 
-Researchers have explored various methods for embedding data in these higher-order
-structures. The challenge lies in balancing encoding capacity with naturalness.
-Too aggressive an approach results in awkward or artificial text, while too subtle
-an approach risks losing the encoded data.
+    // This logic attempts to reconstruct the encoding decisions by comparing original and modified paragraphs.
+    // It's still fragile and assumes the encoding process was the primary change.
+    while (origIdx < originalParagraphs.length && modIdx < currentParagraphs.length) {
+        const origPara = originalParagraphs[origIdx];
+        const modPara = currentParagraphs[modIdx];
 
-The approach described here represents one possible solution to this challenge.
-By distributing encoded bits across multiple structural levels, we create redundancy
-that increases the likelihood of successful extraction even after significant
-transformation of the content.
-`;
+        // Skip headings if they match
+        if (HEADING_REGEX.test(origPara) && origPara === modPara) {
+            origIdx++;
+            modIdx++;
+            continue;
+        }
 
-  const dataToHide = "This is a demonstration of structural steganography that can survive content transformations.";
-  
-  demonstrateStructuralEncoding(sampleText, dataToHide);
+        // Check for potential merge (orig[i] + orig[i+1] == mod[j])
+        if (origIdx + 1 < originalParagraphs.length) {
+            const nextOrigPara = originalParagraphs[origIdx + 1];
+            // Approximate check for merge (allow for space difference)
+            if (`${origPara} ${nextOrigPara}` === modPara) {
+                bits.push(true); // Merge implies bit 1
+                origIdx += 2;
+                modIdx += 1;
+                continue;
+            }
+        }
+
+        // Check for potential split (orig[i] == mod[j] + mod[j+1])
+        if (modIdx + 1 < currentParagraphs.length) {
+            const nextModPara = currentParagraphs[modIdx + 1];
+             // Approximate check for split
+            if (`${modPara} ${nextModPara}` === origPara) {
+                bits.push(false); // Split implies bit 0
+                origIdx += 1;
+                modIdx += 2;
+                continue;
+            }
+        }
+
+        // If no merge or split detected, assume no bit encoded here, advance both
+        // This might happen if a paragraph was too long/short for modification
+        // or if other edits occurred.
+        if (origPara === modPara) {
+             origIdx++;
+             modIdx++;
+        } else {
+            // Paragraphs differ but don't match split/merge pattern.
+            // This indicates either an unhandled encoding case or external modification.
+            console.warn(`[extractStructuralBits] Unmatched paragraphs at origIdx ${origIdx}, modIdx ${modIdx}. Extraction may be inaccurate.`);
+            // Attempt to resync - simple strategy: advance both
+            origIdx++;
+            modIdx++;
+        }
+    }
+
+    if (origIdx < originalParagraphs.length || modIdx < currentParagraphs.length) {
+         console.warn("[extractStructuralBits] Mismatch in paragraph counts after comparison. Extraction might be incomplete or inaccurate.");
+    }
+
+    return bits;
+}
+
+
+/**
+ * Hides data within the structural elements of the text.
+ * Adds a marker to indicate structural encoding was used.
+ * WARNING: This method can significantly alter text structure and is fragile.
+ */
+export function hideDataStructurally(
+    originalText: string,
+    data: string,
+    options?: Partial<StructuralEncodingOptions> // Allow partial options
+): string {
+    assert(originalText != null, 'Original text must not be null');
+    assert(data != null, 'Data to hide must not be null');
+
+    const mergedOptions: StructuralEncodingOptions = { ...DEFAULT_OPTIONS, ...options };
+
+    // Check min length requirement
+    if (originalText.length < mergedOptions.minContentLength) {
+        console.warn(`[hideDataStructurally] Content length (${originalText.length}) is less than minimum required (${mergedOptions.minContentLength}). Skipping structural encoding.`);
+        return originalText; // Return original text if too short
+    }
+
+    const buffer = Buffer.from(data, 'utf-8');
+    const bits: boolean[] = [];
+    const dataLengthInBits = buffer.length * 8;
+
+    // Limit data length based on maxEncodableBits
+    const maxDataBits = mergedOptions.maxEncodableBits - 16; // Reserve 16 bits for length
+    if (dataLengthInBits > maxDataBits) {
+        console.warn(`[hideDataStructurally] Data size (${dataLengthInBits} bits) exceeds maxEncodableBits (${maxDataBits}). Truncating data.`);
+        // Adjust buffer length to fit
+        const maxBytes = Math.floor(maxDataBits / 8);
+        buffer.slice(0, maxBytes); // This doesn't modify buffer in place, need reassignment
+        const truncatedBuffer = buffer.slice(0, maxBytes);
+        const truncatedLengthInBits = truncatedBuffer.length * 8;
+
+        const lengthBuffer = Buffer.alloc(2);
+        lengthBuffer.writeUInt16BE(truncatedLengthInBits, 0);
+        for (let i = 0; i < lengthBuffer.length; i++) {
+            for (let j = 7; j >= 0; j--) bits.push(((lengthBuffer[i] >> j) & 1) === 1);
+        }
+        for (let i = 0; i < truncatedBuffer.length; i++) {
+            for (let j = 7; j >= 0; j--) bits.push(((truncatedBuffer[i] >> j) & 1) === 1);
+        }
+
+    } else {
+        // Encode length (16 bits)
+        const lengthBuffer = Buffer.alloc(2);
+        lengthBuffer.writeUInt16BE(dataLengthInBits, 0);
+        for (let i = 0; i < lengthBuffer.length; i++) {
+            for (let j = 7; j >= 0; j--) bits.push(((lengthBuffer[i] >> j) & 1) === 1);
+        }
+        // Encode data
+        for (let i = 0; i < buffer.length; i++) {
+            for (let j = 7; j >= 0; j--) bits.push(((buffer[i] >> j) & 1) === 1);
+        }
+    }
+
+
+    const { modifiedText, bitsEncoded } = encodeStructuralBits(
+        originalText,
+        bits,
+        mergedOptions.encodingStrength,
+        mergedOptions.preserveExistingStructure
+    );
+
+    if (bitsEncoded < bits.length) {
+        console.warn(`[hideDataStructurally] Structural encoding incomplete. Only ${bitsEncoded} of ${bits.length} bits encoded.`);
+        // Decide if partial encoding is acceptable or should throw/return original
+        // For now, proceed with partially encoded text but add a warning marker
+         const marker = "\n\n[Structure Modified for Encoding - INCOMPLETE]\n\n";
+         return marker + modifiedText + marker;
+    }
+
+    const marker = "\n\n[Structure Modified for Encoding]\n\n";
+    return marker + modifiedText + marker;
+}
+
+/**
+ * Extracts data hidden using structural encoding.
+ * Relies on finding markers and the highly unreliable extractStructuralBits.
+ * WARNING: Extraction is likely to fail if the text was reformatted or original text is unavailable.
+ * @param text Text to extract from.
+ * @param originalText The original text *before* encoding. Required for reliable extraction.
+ */
+export function extractHiddenStructuralData(text: string, originalText?: string): string | null {
+    assert(text != null, 'Text to extract from must not be null');
+    const marker = "[Structure Modified for Encoding"; // Allow incomplete marker too
+    const startMarkerIndex = text.indexOf(marker);
+    const endMarkerIndex = text.lastIndexOf(marker); // Find the last occurrence
+
+    if (startMarkerIndex === -1) {
+        // console.log("[extractHiddenStructuralData] Encoding marker not found.");
+        return null; // No marker found
+    }
+
+    // Find the end of the start marker line
+    const markerEndLineIndex = text.indexOf('\n', startMarkerIndex);
+    if (markerEndLineIndex === -1) {
+         console.warn("[extractHiddenStructuralData] Malformed start marker.");
+         return null;
+    }
+
+    // Find the start of the end marker line
+    let contentEndIndex = endMarkerIndex;
+    if (endMarkerIndex !== -1) {
+        const endMarkerLineStart = text.lastIndexOf('\n', endMarkerIndex);
+        contentEndIndex = (endMarkerLineStart !== -1) ? endMarkerLineStart : endMarkerIndex; // Use start of line if found
+    } else {
+        // If no end marker, assume content goes to end of text (less reliable)
+        contentEndIndex = text.length;
+        console.warn("[extractHiddenStructuralData] End marker not found. Attempting extraction on content after start marker.");
+    }
+
+
+    const contentToDecode = text.substring(markerEndLineIndex + 1, contentEndIndex).trim();
+
+    // Pass original text if available
+    const extractedBits = extractStructuralBits(contentToDecode, originalText);
+    if (!extractedBits) {
+         console.warn("[extractHiddenStructuralData] Failed to extract structural bits (likely due to ambiguity or missing original text).");
+         return null;
+    }
+
+    if (extractedBits.length < 16) {
+        console.warn(`[extractHiddenStructuralData] Not enough bits (${extractedBits.length}) for length prefix.`);
+        return null;
+    }
+
+    // Decode length (MSB first)
+    let lengthValue = 0;
+    for (let i = 0; i < 16; i++) {
+        lengthValue = (lengthValue << 1) | (extractedBits[i] ? 1 : 0);
+    }
+
+    const expectedTotalBits = 16 + lengthValue;
+    if (extractedBits.length < expectedTotalBits) {
+        console.warn(`[extractHiddenStructuralData] Incomplete data: Expected ${expectedTotalBits} bits (16 + ${lengthValue}), got ${extractedBits.length}. Attempting partial decode.`);
+         // Adjust lengthValue to the number of available data bits
+         lengthValue = extractedBits.length - 16;
+         if (lengthValue <= 0) return null; // Not enough bits even for partial data
+    } else if (extractedBits.length > expectedTotalBits) {
+         console.warn(`[extractHiddenStructuralData] Extra bits detected: Expected ${expectedTotalBits}, got ${extractedBits.length}. Using expected length.`);
+         // Truncate extractedBits to expected length
+         extractedBits.splice(expectedTotalBits);
+    }
+
+
+    const dataBits = extractedBits.slice(16); // Get all bits after length prefix up to the determined end
+    const numBytes = Math.ceil(lengthValue / 8);
+    if (numBytes === 0) return ""; // Handle case where length is 0
+
+    const buffer = Buffer.alloc(numBytes);
+    for (let i = 0; i < numBytes; i++) {
+        let byteValue = 0;
+        for (let j = 0; j < 8; j++) {
+            const bitIndex = i * 8 + j;
+            if (bitIndex < dataBits.length) { // Check against actual dataBits length
+                byteValue = (byteValue << 1) | (dataBits[bitIndex] ? 1 : 0);
+            } else {
+                // If lengthValue indicated more bits than available in dataBits (due to truncation warning)
+                // pad with zeros.
+                byteValue <<= 1;
+            }
+        }
+        buffer[i] = byteValue;
+    }
+
+    try {
+        return buffer.toString('utf-8');
+    } catch (e) {
+        console.error("[extractHiddenStructuralData] Error converting buffer to UTF-8:", e);
+        return null; // Return null if buffer is invalid UTF-8
+    }
 }

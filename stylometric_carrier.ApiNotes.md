@@ -129,3 +129,34 @@ This module serves as a complementary approach to existing steganographic techni
 *   Optional comma and voice style implementations use simplified heuristics based on sentence structure or keywords.
 *   Ensure bit manipulation (bytesToBits, bitsToBytes) is correct.
 *   Error handling should prevent crashes but may return empty results or partial encodings if text lacks features.
+
+---
+
+# Module: stylometric_carrier.genai.mts - ApiNotes
+
+## Role
+Provides implementations for various stylometric carriers, each capable of encoding and extracting binary data within specific linguistic features of text.
+
+## Design Goals
+- Implement diverse carriers (synonyms, punctuation, sentence length, etc.).
+- Provide `estimateCapacity`, `apply`, and `extract` methods for each carrier.
+- Ensure carriers modify text subtly where possible.
+- Allow combination of carriers via the `StylometricCarrier` class.
+
+## Carriers
+- **SentenceLength:** Encodes bits based on sentence length parity (odd/even).
+- **SynonymChoice:** (Implementation Needed) Encodes bits by selecting synonyms from predefined sets based on the bit value. Requires a synonym dictionary/thesaurus.
+- **PunctuationStyle:** (Implementation Needed) Encodes bits using variations in punctuation (e.g., comma vs. semicolon, period vs. exclamation).
+- **WhitespaceStyle:** (Implementation Needed) Encodes bits using non-standard whitespace patterns (e.g., double spaces after periods). *Caution: Fragile.*
+- **VoiceStyle:** (Implementation Needed) Encodes bits by switching between active/passive voice or formal/informal tone. *Requires advanced NLP.*
+- **DescriptionDetail:** (Implementation Needed) Encodes bits by adding/removing descriptive adjectives or adverbs.
+- **CounterpointPhrase:** (Implementation Needed) Encodes bits by inserting/removing specific transition phrases (e.g., "however", "on the other hand").
+
+## Constraints
+- Capacity varies greatly depending on the carrier and input text.
+- Some carriers are more robust to modification than others.
+- NLP requirements vary; some carriers need external libraries or models (e.g., thesaurus, parser).
+- `encodePayload`/`extractPayload` orchestrate bit allocation across selected carriers.
+
+## Paradigm
+[paradigm:imperative] - Text manipulation logic is inherently step-by-step. Helper functions may use functional style.

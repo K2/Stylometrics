@@ -1,0 +1,105 @@
+{
+    "corpus": [
+      {
+        "id": "biz-email-1",
+        "genre": "business",
+        "subgenre": "email",
+        "length": "medium",
+        "content": "Dear Ms. Alvarez,\n\nI hope this email finds you well. Per our discussion earlier this week, I’ve attached a detailed proposal outlining our recommended marketing strategies for Q3, including budget allocations, campaign timelines, and KPIs.\n\nKey highlights:\n- A 20% increase in digital ad spend, focusing on retargeting.\n- A/B testing for the new landing page design.\n- Collaboration with influencers in the tech sector.\n\nPlease review at your earliest convenience, and let’s schedule a meeting to discuss adjustments. I’m available Tuesday or Wednesday afternoon.\n\nBest regards,\nJonathan Mercer\nMarketing Director\nBrightPath Solutions",
+        "persona_variants": [
+          {
+            "persona": "formal_executive",
+            "tone": "polished, authoritative",
+            "complexity": "high",
+            "variant_content": "Dear Ms. Alvarez,\n\nPer our alignment on strategic priorities, enclosed is the Q3 marketing proposal, vetted by Finance and Analytics. Key imperatives:\n- Digital spend reallocation (+20% YoY) with ROI thresholds.\n- Landing page optimization via multivariate testing.\n- Tier-1 influencer partnerships (see Appendix B for vetting criteria).\n\nKindly review by EOD Friday. My EA will coordinate calendars for a deep-dive session.\n\nRegards,\nJonathan Mercer\nSVP, Growth Strategy\nBrightPath Solutions"
+          },
+          {
+            "persona": "friendly_colleague",
+            "tone": "casual, collaborative",
+            "complexity": "medium",
+            "variant_content": "Hi Maria,\n\nQuick follow-up—here’s that Q3 marketing plan we brainstormed! Highlights:\n- Upping digital ads (especially retargeting—those numbers look great).\n- Testing the new landing page (finally!).\n- Maybe partnering with some tech influencers?\n\nLet me know your thoughts! Free for coffee Tuesday to chat?\n\nCheers,\nJon"
+          },
+          {
+            "persona": "abrupt_consultant",
+            "tone": "terse, data-driven",
+            "complexity": "medium",
+            "variant_content": "Alvarez—\n\nQ3 plan attached. Key moves:\n- +20% digital spend (retargeting focus).\n- A/B test landing page.\n- Influencer pilots (tech niche).\n\nReview and revert by COB Thursday. Availability: Tue/Wed PM.\n\n—Mercer"
+          }
+        ],
+        "metadata": {
+          "word_count": 98,
+          "sentence_structure": "compound-complex",
+          "keywords": ["marketing", "proposal", "Q3", "KPIs"]
+        }
+      },
+      {
+        "id": "tech-api-1",
+        "genre": "technical",
+        "subgenre": "API documentation",
+        "length": "short",
+        "content": "Endpoint: GET /api/users/{id}\nDescription: Retrieves user data by ID.\nParameters:\n- id (required): Unique user identifier (UUID).\nResponses:\n- 200 OK: Returns JSON user object.\n- 404 Not Found: Invalid user ID.",
+        "persona_variants": [
+          {
+            "persona": "beginner_friendly",
+            "tone": "instructional",
+            "complexity": "low",
+            "variant_content": "How to fetch a user’s data:\n1. Call: GET /api/users/{id}\n2. Replace {id} with the user’s UUID.\n3. Success? You’ll get a JSON response. If the ID is wrong, you’ll see a 404 error."
+          },
+          {
+            "persona": "engineer_sarcastic",
+            "tone": "irreverent",
+            "complexity": "medium",
+            "variant_content": "GET /api/users/{id}\nBecause you definitely need more user data.\n- id: The UUID (or your wild guess).\n- 200: Congrats, here’s a user.\n- 404: Whoops, try a real ID next time."
+          },
+          {
+            "persona": "security_paranoid",
+            "tone": "urgent",
+            "complexity": "high",
+            "variant_content": "WARNING: Unauthenticated GET /api/users/{id} exposure risks PII leaks. \n- id: UUID v4 only (regex enforce).\n- 200: Mask email/phone in response.\n- 404: Log failed attempts (brute-force alert)."
+          }
+        ],
+        "metadata": {
+          "word_count": 32,
+          "sentence_structure": "imperative",
+          "keywords": ["API", "endpoint", "UUID", "JSON"]
+        }
+      },
+      {
+        "id": "fiction-noir-1",
+        "genre": "fiction",
+        "subgenre": "noir",
+        "length": "short",
+        "content": "The dame walked in like trouble wearing perfume. One look at her smudged mascara and the .38 in her glove, and I knew this case was gonna leave scars.",
+        "persona_variants": [
+          {
+            "persona": "classic_detective",
+            "tone": "gritty",
+            "complexity": "medium",
+            "variant_content": "She stepped into my office like a bad check—too pretty to trust. The .38 peeking from her glove said she wasn’t here for small talk. I poured a drink. ‘Start talking, sister.’"
+          },
+          {
+            "persona": "modern_parody",
+            "tone": "humorous",
+            "complexity": "low",
+            "variant_content": "In walked a woman who screamed ‘trouble’ in 4-inch heels. Her mascara was a disaster, and her purse bulged like it held a small arsenal. I sighed. ‘Let me guess—your ex is a dragon?’"
+          },
+          {
+            "persona": "cyberpunk_remix",
+            "tone": "tech-noir",
+            "complexity": "high",
+            "variant_content": "Her neural implants glitched as she entered, static curling around her pupils. The plasma pistol in her sleeve was vintage—a collector’s item. My augs tagged her as ‘hazard.’ I disabled the safety on my cyberarm. ‘Who’s paying you?’"
+          }
+        ],
+        "metadata": {
+          "word_count": 28,
+          "sentence_structure": "descriptive",
+          "keywords": ["noir", "detective", "gun", "mystery"]
+        }
+      }
+    ],
+    "metadata": {
+      "total_entries": 3,
+      "genres_covered": ["business", "technical", "fiction"],
+      "persona_count": 9
+    }
+  }

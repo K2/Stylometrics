@@ -1,216 +1,217 @@
-/**
- * Stylometric Fingerprinter Script
- *
- * This script analyzes the stylometric properties of an input text,
- * instructs an AI to generate new text mimicking those properties,
- * and then embeds provided metadata (fingerprint) into the generated text
- * using various stylometric carrier techniques (phraseology, punctuation, linguistic diversity).
- *
- * This operates primarily within a functional paradigm where input text and metadata
- * are transformed into fingerprinted text.
- */
+import assert from 'assert';
+import crypto from 'crypto';
+import { StylometricCarrier, type EncodingOptions as CarrierEncodingOptions } from './stylometric_carrier.genai.mts';
+import { extractStylometricFeatures as actualExtractStylometricFeatures } from './stylometry_features.genai.mts';
 
-// Define the script's properties and parameters
-script({
-    id: "stylometric_fingerprinter",
-    title: "Stylometric Fingerprinter",
-    description: "Analyzes input text style, generates mimicking text, and embeds a fingerprint using stylometric techniques.",
-    // Using a powerful model capable of nuanced style analysis and generation
-    model: "openai:gpt-4o", // Or claude-3.5-sonnet, etc.
-    parameters: {
-        originalText: {
-            type: "string",
-            description: "The original text whose style should be mimicked.",
-        },
-        metadataToEmbed: {
-            type: "object",
-            description: "JSON object containing the fingerprint hash and other metadata to embed.",
-            properties: {
-                fingerprintHash: { type: "string" },
-                timestamp: { type: "string" },
-                sourceId: { type: "string" },
-                // Add other relevant metadata fields
-            },
-            required: ["fingerprintHash"],
-        },
-        targetLength: {
-            type: "integer",
-            description: "Approximate desired word count for the generated text.",
-            default: 500,
-        },
-    },
-    // Request technical system prompt for better instruction following
-    system: ["system.technical", "system.english"],
-    temperature: 0.4, // Lower temperature for more consistent style mimicry
-    maxTokens: 2000, // Allow sufficient tokens for analysis and generation
-})
+type FeatureExtractor = (text: string) => Promise<Record<string, number>>;
 
-// --- Helper Function (Conceptual) ---
-// In a real scenario, these would import actual implementations
-const applyErasureCoding = (data: string): string => {
-    // Conceptual: Apply Reed-Solomon or similar erasure coding
-    console.log(`Applying erasure coding to: ${data.substring(0, 50)}...`)
-    // Simulate adding redundancy - replace with actual library call
-    return data + data.split("").reverse().join("").substring(0, data.length / 2)
+let extractStylometricFeatures: FeatureExtractor = actualExtractStylometricFeatures;
+
+export function __setFeatureExtractor(extractor: FeatureExtractor) {
+    extractStylometricFeatures = extractor;
 }
 
-const stringToBinary = (str: string): string => {
-    return Array.from(str)
-        .map((char) => char.charCodeAt(0).toString(2).padStart(8, "0"))
-        .join("")
+export function __restoreFeatureExtractor() {
+    extractStylometricFeatures = actualExtractStylometricFeatures;
 }
 
-// --- Main Script Logic ---
-def("ORIGINAL_TEXT", env.vars.originalText)
-def("METADATA", JSON.stringify(env.vars.metadataToEmbed))
-def("TARGET_LENGTH", env.vars.targetLength.toString())
+export interface FingerprinterOptions {
+    carrierOptions?: CarrierEncodingOptions;
+    fingerprintCarriers?: string[];
+    fingerprintLength?: number;
+}
 
-// Use defOutputProcessor to handle the embedding *after* generation
-defOutputProcessor(async (output, { vars }) => {
-    const generatedText = output.text
-    const metadataString = vars.METADATA
-    const targetLength = parseInt(vars.TARGET_LENGTH)
+export async function generateFingerprintFromFeatures(features: Record<string, number>, length: number = 16): Promise<string> {
+    assert(features != null, '[generateFingerprintFromFeatures] Features cannot be null.');
+    if (Object.keys(features).length === 0) {
+        console.warn("[generateFingerprintFromFeatures] No features provided, returning empty fingerprint.");
+        return "";
+    }
+    const featureItems = Object.entries(features)
+        .map(([key, value]) => `${key}:${value.toFixed(3)}`)
+        .sort();
+    const featureString = featureItems.join('|');
+    const hash = crypto.createHash('sha256').update(featureString).digest('hex');
+    return hash.substring(0, Math.max(4, length));
+}
 
-    if (!generatedText || generatedText.trim().length < 50) {
-        console.error("LLM failed to generate sufficient text.")
-        return { text: "Error: Generation failed.", annotations: [{ severity: "error", message: "LLM generation failed or produced insufficient text." }] }
+async function applyFingerprint(text: string, fingerprint: string, carrier: StylometricCarrier, carrierOptions: CarrierEncodingOptions): Promise<string> {
+    assert(text != null, '[applyFingerprint] Text cannot be null.');
+    assert(fingerprint != null, '[applyFingerprint] Fingerprint cannot be null.');
+    assert(carrier != null, '[applyFingerprint] Carrier cannot be null.');
+    console.log(`Applying fingerprint "${fingerprint}"...`);
+
+    if (fingerprint.length === 0) {
+        console.warn("[applyFingerprint] Fingerprint is empty, returning original text.");
+        return text;
     }
 
-    console.log(`Generated text length: ${generatedText.split(/\s+/).length} words.`)
+    const payload = Buffer.from(fingerprint, 'utf-8');
+    const payloadBits = payload.length * 8;
 
-    // 1. Prepare Metadata for Embedding
-    const erasureCodedMetadata = applyErasureCoding(metadataString)
-    const binaryData = stringToBinary(erasureCodedMetadata)
-    const bitsToEmbed = binaryData.split("").map(bit => bit === '1') // Array of booleans
+    const modifiedText = await carrier.encodePayload(text, payload, carrierOptions);
 
-    console.log(`Prepared ${bitsToEmbed.length} bits for embedding.`)
+    const extractedPayload = await carrier.extractPayload(modifiedText, carrierOptions);
+    const extractedFingerprint = Buffer.from(extractedPayload).toString('utf-8');
 
-    // 2. Simulate Stylometric Embedding (using conceptual carriers)
-    // In a real implementation, you'd instantiate and use StylometricCarrier or similar
-    let modifiedText = generatedText
-    let bitsEncoded = 0
+    if (!extractedFingerprint.startsWith(fingerprint)) {
+        console.warn(`[applyFingerprint] Verification failed! Fingerprint encoding likely incomplete or corrupted. Expected "${fingerprint}", extracted "${extractedFingerprint}".`);
+        return text;
+    } else if (extractedFingerprint.length < fingerprint.length) {
+        console.warn(`[applyFingerprint] Verification warning: Extracted fingerprint is shorter than original. Expected ${fingerprint.length} chars, got ${extractedFingerprint.length}.`);
+    } else {
+        console.log(`[applyFingerprint] Successfully encoded and verified ${payloadBits} bits.`);
+    }
 
-    // --- Conceptual Embedding Logic ---
-    // This section simulates applying different carrier types.
-    // A real implementation would involve complex text analysis and modification.
+    return modifiedText;
+}
 
-    try {
-        // Example: Using a hypothetical carrier system
-        // const carrier = new StylometricCarrier(); // Assuming this class exists
+export class StylometricFingerprinter {
+    private carrier: StylometricCarrier;
+    private options: Required<FingerprinterOptions>;
+    private carrierEncodingOptions: CarrierEncodingOptions;
 
-        // a) Phraseology Carrier (e.g., sentence length variation)
-        // const phraseologyCapacity = carrier.estimateCapacity(modifiedText, 'sentence_length');
-        // const phraseologyBits = bitsToEmbed.slice(bitsEncoded, bitsEncoded + phraseologyCapacity);
-        // modifiedText = carrier.apply(modifiedText, phraseologyBits, 'sentence_length');
-        // bitsEncoded += phraseologyBits.length;
-        console.log(`Conceptual: Applying phraseology carrier... (e.g., sentence length)`)
-        // Simulate encoding some bits
-        const phraseoBits = Math.min(bitsToEmbed.length - bitsEncoded, Math.floor(modifiedText.split('.').length / 5)); // ~1 bit per 5 sentences
-        bitsEncoded += phraseoBits;
-        console.log(`Conceptual: Encoded ${phraseoBits} bits via phraseology. Total: ${bitsEncoded}`)
+    constructor(options: FingerprinterOptions = {}) {
+        this.carrier = new StylometricCarrier();
 
+        const defaultOptions: Required<FingerprinterOptions> = {
+            carrierOptions: {
+                usePhraseologyCarriers: false,
+                usePunctuationCarriers: true,
+                useLinguisticCarriers: true,
+                useReadabilityCarriers: false,
+                maxDetectionRisk: 0.5,
+            },
+            fingerprintCarriers: [],
+            fingerprintLength: 16,
+        };
 
-        // b) Punctuation Carrier (e.g., comma vs semicolon, quote style)
-        // const punctuationCapacity = carrier.estimateCapacity(modifiedText, 'punctuation_freq');
-        // const punctuationBits = bitsToEmbed.slice(bitsEncoded, bitsEncoded + punctuationCapacity);
-        // modifiedText = carrier.apply(modifiedText, punctuationBits, 'punctuation_freq');
-        // bitsEncoded += punctuationBits.length;
-        console.log(`Conceptual: Applying punctuation carrier... (e.g., quote style)`)
-        const punctBits = Math.min(bitsToEmbed.length - bitsEncoded, Math.floor(modifiedText.split(/[,;:"']/).length / 10)); // ~1 bit per 10 punctuation marks
-        bitsEncoded += punctBits;
-        console.log(`Conceptual: Encoded ${punctBits} bits via punctuation. Total: ${bitsEncoded}`)
-
-
-        // c) Linguistic Diversity Carrier (e.g., synonym choice, TTR)
-        // const diversityCapacity = carrier.estimateCapacity(modifiedText, 'lexical_richness');
-        // const diversityBits = bitsToEmbed.slice(bitsEncoded, bitsEncoded + diversityCapacity);
-        // modifiedText = carrier.apply(modifiedText, diversityBits, 'lexical_richness');
-        // bitsEncoded += diversityBits.length;
-        console.log(`Conceptual: Applying linguistic diversity carrier... (e.g., synonym choice)`)
-        const diversityBits = Math.min(bitsToEmbed.length - bitsEncoded, Math.floor(modifiedText.split(/\s+/).length / 150)); // ~1 bit per 150 words
-        bitsEncoded += diversityBits;
-        console.log(`Conceptual: Encoded ${diversityBits} bits via linguistic diversity. Total: ${bitsEncoded}`)
-
-        // Add more carriers as needed (e.g., voice style, syllable count)
-
-        if (bitsEncoded < bitsToEmbed.length) {
-            console.warn(`Warning: Could not embed all metadata. Encoded ${bitsEncoded}/${bitsToEmbed.length} bits.`)
-            // Decide handling: throw error, return partial, add annotation
-             return {
-                text: modifiedText, // Return partially embedded text
-                annotations: [{
-                    severity: "warning",
-                    message: `Insufficient capacity to embed all metadata. Encoded ${bitsEncoded}/${bitsToEmbed.length} bits.`
-                }]
-            }
-        } else {
-             console.log(`Successfully embedded ${bitsEncoded} bits.`)
+        this.options = { ...defaultOptions, ...options };
+        if (options.carrierOptions) {
+            this.options.carrierOptions = { ...defaultOptions.carrierOptions, ...options.carrierOptions };
         }
 
-    } catch (e) {
-        console.error(`Error during conceptual embedding: ${e.message}`)
-        return { text: generatedText, annotations: [{ severity: "error", message: `Embedding failed: ${e.message}` }] } // Return original generated text on error
+        this.carrierEncodingOptions = { ...this.options.carrierOptions };
+        if (this.options.fingerprintCarriers && this.options.fingerprintCarriers.length > 0) {
+            const allCarriers = this.carrier.getAvailableCarriers();
+            this.carrierEncodingOptions.usePhraseologyCarriers = allCarriers.some(c => c.category === 'phraseology' && this.options.fingerprintCarriers.includes(c.id));
+            this.carrierEncodingOptions.usePunctuationCarriers = allCarriers.some(c => c.category === 'punctuation' && this.options.fingerprintCarriers.includes(c.id));
+            this.carrierEncodingOptions.useLinguisticCarriers = allCarriers.some(c => c.category === 'linguistic' && this.options.fingerprintCarriers.includes(c.id));
+            this.carrierEncodingOptions.useReadabilityCarriers = allCarriers.some(c => c.category === 'readability' && this.options.fingerprintCarriers.includes(c.id));
+            console.warn("StylometricFingerprinter: Filtering by specific fingerprintCarriers IDs is not fully supported by the current StylometricCarrier. Using category flags based on specified IDs.");
+        }
+
+        const activeCarriers = this.carrier.getAvailableCarriers().filter(carrier => {
+            if (carrier.category === 'phraseology' && !this.carrierEncodingOptions.usePhraseologyCarriers) return false;
+            if (carrier.category === 'punctuation' && !this.carrierEncodingOptions.usePunctuationCarriers) return false;
+            if (carrier.category === 'linguistic' && !this.carrierEncodingOptions.useLinguisticCarriers) return false;
+            if (carrier.category === 'readability' && !this.carrierEncodingOptions.useReadabilityCarriers) return false;
+            if (carrier.detectability > this.carrierEncodingOptions.maxDetectionRisk) return false;
+            return true;
+        });
+        console.log(`StylometricFingerprinter initialized. Fingerprint length: ${this.options.fingerprintLength}. Active carriers for fingerprinting: ${activeCarriers.map(c => c.id).join(', ') || 'None'}`);
     }
 
-    // --- End Conceptual Embedding Logic ---
+    async extractFeatures(text: string): Promise<Record<string, number>> {
+        assert(text != null, '[extractFeatures] Input text cannot be null.');
+        if (!text.trim()) {
+            console.warn("[extractFeatures] Called with empty or whitespace-only text.");
+            return {};
+        }
+        try {
+            console.log("[extractFeatures] Calling feature extractor...");
+            const features = await extractStylometricFeatures(text);
+            assert(features != null, '[extractFeatures] Feature extraction returned null/undefined.');
+            console.log(`[extractFeatures] Extracted ${Object.keys(features).length} features.`);
+            return features;
+        } catch (error: any) {
+            console.error("[extractFeatures] Error during feature extraction:", error.message || error);
+            return {};
+        }
+    }
 
-    // 3. Return the final text with embedded data
-    return { text: modifiedText }
-})
+    async addFingerprint(originalText: string, fingerprintData?: string): Promise<string> {
+        assert(originalText != null, '[addFingerprint] Original text must not be null.');
 
-// --- Main Prompt to the LLM ---
-$`
-You are an expert stylometrist and text generator. Your task is to first analyze the stylistic properties of the provided ORIGINAL_TEXT and then generate **new** text that closely mimics this style, making it statistically difficult to distinguish the authorship. Finally, this generated text will be used to embed a hidden fingerprint.
+        let fingerprintToEmbed: string;
+        if (fingerprintData) {
+            fingerprintToEmbed = fingerprintData.substring(0, this.options.fingerprintLength);
+            if (fingerprintData.length !== this.options.fingerprintLength) {
+                console.warn(`[addFingerprint] Provided fingerprint length (${fingerprintData.length}) differs from configured length (${this.options.fingerprintLength}). Using truncated/padded fingerprint: ${fingerprintToEmbed}`);
+            } else {
+                console.log(`[addFingerprint] Using provided fingerprint data: ${fingerprintToEmbed}`);
+            }
+        } else {
+            console.log("[addFingerprint] Extracting features to generate fingerprint...");
+            const features = await this.extractFeatures(originalText);
+            if (Object.keys(features).length === 0) {
+                console.error("[addFingerprint] Failed to extract features. Cannot generate or apply fingerprint.");
+                return originalText;
+            }
+            fingerprintToEmbed = await generateFingerprintFromFeatures(features, this.options.fingerprintLength);
+            console.log(`[addFingerprint] Generated fingerprint from features: ${fingerprintToEmbed}`);
+        }
 
-**Phase 1: Stylometric Analysis**
+        assert(fingerprintToEmbed != null, '[addFingerprint] Fingerprint to embed is null.');
+        if (fingerprintToEmbed.length === 0) {
+            console.warn("[addFingerprint] Generated or provided fingerprint is empty. Skipping embedding.");
+            return originalText;
+        }
 
-Analyze the following ORIGINAL_TEXT based on the key stylometric categories identified in research (like Kumarage et al., 2023):
+        return applyFingerprint(originalText, fingerprintToEmbed, this.carrier, this.carrierEncodingOptions);
+    }
 
-ORIGINAL_TEXT:
-\`\`\`
-${def("ORIGINAL_TEXT")}
-\`\`\`
+    async extractFingerprint(modifiedText: string): Promise<string | null> {
+        assert(modifiedText != null, '[extractFingerprint] Modified text must not be null.');
 
-Focus on these categories:
+        const activeCarriers = this.carrier.getAvailableCarriers().filter(carrier => {
+            if (carrier.category === 'phraseology' && !this.carrierEncodingOptions.usePhraseologyCarriers) return false;
+            if (carrier.category === 'punctuation' && !this.carrierEncodingOptions.usePunctuationCarriers) return false;
+            if (carrier.category === 'linguistic' && !this.carrierEncodingOptions.useLinguisticCarriers) return false;
+            if (carrier.category === 'readability' && !this.carrierEncodingOptions.useReadabilityCarriers) return false;
+            if (carrier.detectability > this.carrierEncodingOptions.maxDetectionRisk) return false;
+            return true;
+        });
 
-1.  **Phraseology:**
-    *   Average and standard deviation of sentence length (words per sentence).
-    *   Average and standard deviation of paragraph length (sentences per paragraph, words per paragraph).
-    *   Common sentence structures (e.g., simple, compound, complex, compound-complex prevalence).
-    *   Use of transition words or phrases.
+        console.log(`[extractFingerprint] Attempting to extract fingerprint using ${activeCarriers.map(c => c.id).join(', ') || 'None'} carriers...`);
 
-2.  **Punctuation:**
-    *   Overall punctuation frequency.
-    *   Frequency of specific marks (commas, periods, semicolons, colons, question marks, exclamation points, quotes, dashes).
-    *   Patterns like Oxford comma usage, quote style (' vs ").
+        const extractedPayload = await this.carrier.extractPayload(modifiedText, this.carrierEncodingOptions);
 
-3.  **Linguistic Diversity:**
-    *   Lexical Richness: Estimate Type-Token Ratio (TTR) or Moving-Average TTR (MATTR) if possible. Describe the vocabulary richness (simple, varied, technical).
-    *   Readability Score: Estimate Flesch Reading Ease or a similar metric. Describe the general complexity.
-    *   Function word usage patterns (prepositions, conjunctions, articles).
-    *   Prevalence of passive vs. active voice.
+        if (extractedPayload && extractedPayload.length > 0) {
+            const potentialFingerprint = Buffer.from(extractedPayload).toString('utf-8');
+            const fingerprint = potentialFingerprint.substring(0, this.options.fingerprintLength);
 
-**Output your analysis clearly, summarizing the key stylistic features.**
+            const fingerprintRegex = new RegExp(`^[a-f0-9]{${this.options.fingerprintLength}}$`);
+            if (fingerprintRegex.test(fingerprint)) {
+                console.log(`[extractFingerprint] Extracted potential fingerprint: ${fingerprint}`);
+                return fingerprint;
+            } else {
+                console.warn(`[extractFingerprint] Extracted payload start "${fingerprint}" does not match expected format/length (${this.options.fingerprintLength}). Discarding.`);
+                console.warn(`   (Full extracted payload: "${potentialFingerprint.substring(0, 50)}...")`);
+                return null;
+            }
+        } else {
+            console.log("[extractFingerprint] No fingerprint payload found.");
+            return null;
+        }
+    }
 
-**Phase 2: Mimetic Text Generation**
+    async verifyFingerprint(text: string): Promise<{ match: boolean; extracted?: string | null; generated?: string }> {
+        assert(text != null, '[verifyFingerprint] Input text cannot be null.');
+        console.log("[verifyFingerprint] Verifying fingerprint...");
+        const extracted = await this.extractFingerprint(text);
 
-Now, generate **new**, original text content (do NOT reuse significant portions of the ORIGINAL_TEXT) that adheres closely to the stylistic profile you just analyzed.
+        console.log("[verifyFingerprint] Re-extracting features to generate current fingerprint...");
+        const features = await this.extractFeatures(text);
+        if (Object.keys(features).length === 0) {
+            console.error("[verifyFingerprint] Failed to extract features from current text. Cannot verify.");
+            return { match: false, extracted: extracted ?? null };
+        }
+        const generated = await generateFingerprintFromFeatures(features, this.options.fingerprintLength);
+        console.log(`[verifyFingerprint] Generated fingerprint from current features: ${generated}`);
 
-**Constraints for Generation:**
-
-*   **Topic:** Generate text on a neutral topic like 'the history of coffee' or 'the impact of the printing press' unless the original text strongly suggests a domain.
-*   **Length:** Aim for approximately ${def("TARGET_LENGTH")} words.
-*   **Style Matching:** Explicitly try to match the analyzed characteristics:
-    *   Mimic the sentence length distribution (average and variation).
-    *   Mimic the paragraph structure.
-    *   Use punctuation at similar frequencies and in similar patterns.
-    *   Aim for a similar level of lexical richness (TTR) and readability.
-    *   Use active/passive voice in similar proportions.
-    *   Employ similar function words and transition phrases if characteristic.
-*   **Naturalness:** The generated text must read naturally and coherently.
-*   **Indistinguishability:** The primary goal is that the generated text's style should be statistically similar to the ORIGINAL_TEXT, making authorship attribution difficult based on these features alone.
-
-**Output ONLY the generated text for Phase 2.** Do not include the analysis or any other commentary in the final output.
-`
-
-// Note: The actual embedding happens in the defOutputProcessor above.
+        const match = extracted === generated && extracted !== null;
+        console.log(`[verifyFingerprint] Verification result: ${match ? 'Match' : 'No Match'}`);
+        return { match, extracted: extracted ?? null, generated };
+    }
+}

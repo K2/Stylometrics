@@ -1,392 +1,213 @@
 /**
- * Quote Style Carrier Implementation
- *
- * This module provides a specific implementation of the Quote Style carrier technique
- * identified in the stylometric carrier framework. It encodes information by
- * alternating between different quotation styles (single/double quotes, curly quotes, etc.)
- *
- * This technique has a low detectability (0.2/1.0) as identified by analyzing the
- * Kumarage et al. research on stylometric features.
- *
- * Flow:
- * 1. Identify quotation pairs in text
- * 2. For each bit to encode, modify a quotation pair's style
- * 3. Ensure modifications remain natural and consistent within context
+ * Quote Style Carrier
+ * 
+ * Embeds information by altering the style of quotation marks (e.g., " vs “”).
+ * Design Goals: Implement a reversible carrier using quote styles.
+ * Constraints: Relies on consistent quote usage for extraction. May be sensitive to auto-formatting.
+ * Paradigm: Imperative text manipulation.
+ * Happy Path: Analyze text -> Identify quotes -> Apply style change based on bit -> Extract bit based on style.
+ * ApiNotes: ./ApiNotes.md (File Level), ../capacity_matrix/ApiNotes.md (Directory Level)
  */
+import type { CarrierTechnique } from './types/CarrierTypes.ts'; // Corrected import path extension
 
-// Assuming FeatureMap might be needed for other carriers, keep import for now
-import { FeatureMap } from './stylometric_detection.genai.mjs';
-// Import necessary types from CarrierTypes
-import { type Carrier, type CarrierMetrics, type EncodeResult, type CarrierConfiguration } from './src/types/CarrierTypes.js'; // Assuming CarrierTypes.js is the compiled output or adjust path/extension
+// Define the different quote styles
+const STRAIGHT_DOUBLE = '"';
+const CURLY_DOUBLE_OPEN = '“';
+const CURLY_DOUBLE_CLOSE = '”';
 
-/**
- * Interface for a quote position in text
- */
-interface QuotePosition {
-    index: number;
-    char: string;
-}
+// ApiNotes: ./ApiNotes.md
+// Define specific implementation details for the quote style carrier.
+// Capacity estimation should count replaceable quote pairs.
+// Apply should replace quotes based on bits.
+// Extract should identify quote style to determine bits.
 
-/**
- * Interface for a matched quotation pair
- */
-interface QuotePair {
-    opening: QuotePosition;
-    closing: QuotePosition;
-    content: string;
-    modified?: boolean; // Internal state for encoding logic
-    assignedBit?: boolean; // Store the bit assigned during encoding
-    originalOpenChar?: string; // Store original style if needed for consistency checks
-    originalCloseChar?: string;
-}
+export class QuoteStyleCarrier implements CarrierTechnique {
+    analyze: any;
+    estimateCapacity(text: string): number {
+        throw new Error('Method not implemented.');
+    }
+    id = 'quote_style';
+    name = 'Quote Style Modifier';
+    category: CarrierTechnique['category'] = 'punctuation';
+    bitsPerThousandWords = 15; // Estimate, depends heavily on quote frequency
+    detectability = 0.15; // Low, often normalized by editors
 
-/**
- * Quote style encoding options specific to this carrier
- */
-export interface QuoteStyleOptions extends CarrierConfiguration { // Inherit base config
-    preferDoubleQuotes?: boolean;   // Whether to prefer double quotes as the primary style (maps to bit 1)
-    useSmartQuotes?: boolean;       // Whether to use curly/typographic quotes
-    strictConsistency?: boolean;    // Whether to enforce strict consistency in style per context (e.g., paragraph)
-}
-
-/**
- * QuoteStyleCarrier provides steganographic encoding using quotation mark styles.
- * Implements the Carrier interface.
- */
-export class QuoteStyleCarrier implements Carrier {
-    readonly id: string = 'quoteStyle';
-    readonly name: string = 'Quotation Mark Style Alternation';
-
-    // Standard quote characters
-    private straightSingleQuote = "'";
-    private straightDoubleQuote = "\"";
-    // Note: Using standard ASCII for curly quotes for broader compatibility,
-    // replace with actual Unicode if needed: ‘ ’ “ ”
-    private curlySingleOpenQuote = "'";
-    private curlySingleCloseQuote = "'";
-    private curlyDoubleOpenQuote = "\"";
-    private curlyDoubleCloseQuote = "\"";
-
-    // Default configuration
-    private configuration: Required<QuoteStyleOptions>;
-
-    /**
-     * Initialize the quote style carrier
-     * @param config Configuration options
-     */
-    constructor(config: QuoteStyleOptions = {}) {
-        this.configuration = {
-            preferDoubleQuotes: config.preferDoubleQuotes ?? true,
-            useSmartQuotes: config.useSmartQuotes ?? false, // Default to false for simplicity
-            strictConsistency: config.strictConsistency ?? false, // Default to false
-            // Inherited defaults (adjust as needed for this carrier)
-            maxDetectability: config.maxDetectability ?? 0.3,
-            minRobustness: config.minRobustness ?? 0.2, // Quotes are easily changed
-            prioritizeCapacity: config.prioritizeCapacity ?? false,
-            ...config // Allow overriding inherited defaults
-        };
+    estimate(text: string): number {
+        // Count occurrences of straight double quotes that can be replaced
+        // A more robust implementation would parse sentences/dialogue
+        // Also consider existing curly quotes as potential sites if the bit requires straight quotes
+        const quoteMatches = text.match(new RegExp(`(${STRAIGHT_DOUBLE}|${CURLY_DOUBLE_OPEN})`, 'g'));
+        // Each pair of quotes can potentially encode one bit
+        return quoteMatches ? Math.floor(quoteMatches.length / 2) : 0;
     }
 
-    /**
-     * Get the current configuration.
-     */
-    getConfiguration(): Record<string, any> {
-        return { ...this.configuration };
-    }
+    apply(text: string, bits: boolean[]): { modifiedText: string; bitsEncoded: number } {
+        // ApiNotes: ./quote_style_carrier.ApiNotes.md#Behavior
+        // Refined logic to handle existing quotes and ensure bits are counted even if no change occurs.
+        const potentialSites: { openIndex: number, closeIndex: number, currentStyle: 'straight' | 'curly' }[] = [];
+        let inQuote = false;
+        let lastQuoteIndex = -1;
+        let currentStyle: 'straight' | 'curly' | null = null;
 
-    /**
-     * Set configuration parameters.
-     */
-    configure(config: Record<string, any>): void {
-        this.configuration = { ...this.configuration, ...config };
-    }
-
-    /**
-     * Analyze text to determine quote carrier capacity and metrics.
-     * @param content Text to analyze.
-     * @returns Promise resolving to CarrierMetrics.
-     */
-    async analyzeCapacity(content: string): Promise<CarrierMetrics> {
-        const pairs = this.findQuotePairs(content);
-        const capacity = pairs.length; // Each pair can potentially encode 1 bit
-
-        // Estimate metrics (these are subjective and context-dependent)
-        const detectability = 0.2; // Relatively low if styles are mixed naturally
-        const robustness = 0.2;    // Low, easily altered by formatting/editing
-        const naturalness = 0.6;   // Can be natural if consistent, less so if mixed randomly
-
-        return {
-            capacity: capacity,
-            detectability: detectability,
-            robustness: robustness,
-            naturalness: naturalness
-        };
-    }
-
-    /**
-     * Encode bits into text using quote styles.
-     * @param content Original text content.
-     * @param bits Bits to encode.
-     * @returns Promise resolving to EncodeResult.
-     */
-    async encode(content: string, bits: boolean[]): Promise<EncodeResult> {
-        const pairs = this.findQuotePairs(content);
-        const maxBits = Math.min(bits.length, pairs.length);
-
-        if (maxBits === 0) {
-            return { modifiedContent: content, bitsEncoded: 0 };
-        }
-
-        let modifiedContent = content;
-        let bitsEncoded = 0;
-        const modifications: { index: number; newChar: string }[] = [];
-
-        // Assign bits to pairs and determine necessary changes
-        for (let i = 0; i < maxBits; i++) {
-            const pair = pairs[i];
-            const bit = bits[i];
-            pair.assignedBit = bit; // Store assigned bit for potential consistency logic
-
-            const targetStyle = this.getQuoteStyleForBit(bit);
-
-            // Check if opening quote needs changing
-            if (pair.opening.char !== targetStyle.openChar) {
-                modifications.push({ index: pair.opening.index, newChar: targetStyle.openChar });
-                pair.modified = true;
-            }
-            // Check if closing quote needs changing
-            if (pair.closing.char !== targetStyle.closeChar) {
-                modifications.push({ index: pair.closing.index, newChar: targetStyle.closeChar });
-                pair.modified = true;
-            }
-
-            if (pair.modified) {
-                bitsEncoded++; // Count bit as encoded if a modification is planned
-            }
-        }
-
-        // Apply modifications in reverse index order to avoid shifting subsequent indices
-        modifications.sort((a, b) => b.index - a.index);
-
-        const contentChars = modifiedContent.split('');
-        for (const mod of modifications) {
-            if (mod.index >= 0 && mod.index < contentChars.length) {
-                contentChars[mod.index] = mod.newChar;
+        // 1. Find all potential quote pairs (indices and current style).
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            if (!inQuote) {
+                if (char === STRAIGHT_DOUBLE) {
+                    lastQuoteIndex = i;
+                    inQuote = true;
+                    currentStyle = 'straight';
+                } else if (char === CURLY_DOUBLE_OPEN) {
+                    lastQuoteIndex = i;
+                    inQuote = true;
+                    currentStyle = 'curly';
+                }
             } else {
-                console.warn(`QuoteStyleCarrier: Invalid modification index ${mod.index}`);
+                if (currentStyle === 'straight' && char === STRAIGHT_DOUBLE) {
+                    potentialSites.push({ openIndex: lastQuoteIndex, closeIndex: i, currentStyle: 'straight' });
+                    inQuote = false;
+                    currentStyle = null;
+                } else if (currentStyle === 'curly' && char === CURLY_DOUBLE_CLOSE) {
+                    potentialSites.push({ openIndex: lastQuoteIndex, closeIndex: i, currentStyle: 'curly' });
+                    inQuote = false;
+                    currentStyle = null;
+                } else if (char === STRAIGHT_DOUBLE || char === CURLY_DOUBLE_OPEN) {
+                    // Mismatched or nested quote - reset and re-evaluate
+                    inQuote = false;
+                    currentStyle = null;
+                    i--; // Re-process current character as potential start
+                }
             }
         }
-        modifiedContent = contentChars.join('');
 
-        return {
-            modifiedContent: modifiedContent,
-            bitsEncoded: bitsEncoded // Return the number of bits we attempted to encode by modification
-        };
+        let modifiedText = text;
+        let bitsEncoded = 0;
+        let currentBitIndex = 0;
+        let indexAdjustment = 0; // Track index shifts due to replacements
+
+        // 2. Iterate through pairs and bits, applying changes from end to start to avoid index issues.
+        for (let siteIndex = potentialSites.length - 1; siteIndex >= 0; siteIndex--) {
+            if (currentBitIndex >= bits.length) break; // No more bits to encode
+
+            const site = potentialSites[siteIndex];
+            const targetBit = bits[currentBitIndex]; // Read bit for this site
+            const targetStyle = targetBit ? 'curly' : 'straight';
+
+            let madeChange = false;
+            let openQuote = '';
+            let closeQuote = '';
+
+            if (targetStyle === 'curly' && site.currentStyle === 'straight') {
+                // 3. If bit requires curly and quotes are straight -> replace.
+                openQuote = CURLY_DOUBLE_OPEN;
+                closeQuote = CURLY_DOUBLE_CLOSE;
+                madeChange = true;
+            } else if (targetStyle === 'straight' && site.currentStyle === 'curly') {
+                // 4. If bit requires straight and quotes are curly -> replace.
+                openQuote = STRAIGHT_DOUBLE;
+                closeQuote = STRAIGHT_DOUBLE;
+                madeChange = true;
+            }
+
+            // 5. Consume bit even if no change needed.
+            bitsEncoded++;
+            currentBitIndex++; // Always advance bit index for each potential site processed
+
+            if (madeChange) {
+                const adjustedOpenIndex = site.openIndex + indexAdjustment;
+                const adjustedCloseIndex = site.closeIndex + indexAdjustment;
+
+                const beforeOpen = modifiedText.substring(0, adjustedOpenIndex);
+                const between = modifiedText.substring(adjustedOpenIndex + (site.currentStyle === 'curly' ? CURLY_DOUBLE_OPEN.length : STRAIGHT_DOUBLE.length), adjustedCloseIndex);
+                const afterClose = modifiedText.substring(adjustedCloseIndex + (site.currentStyle === 'curly' ? CURLY_DOUBLE_CLOSE.length : STRAIGHT_DOUBLE.length));
+
+                modifiedText = beforeOpen + openQuote + between + closeQuote + afterClose;
+
+                // Calculate the change in length caused by this replacement
+                const oldLength = (site.currentStyle === 'curly' ? CURLY_DOUBLE_OPEN.length + CURLY_DOUBLE_CLOSE.length : STRAIGHT_DOUBLE.length + STRAIGHT_DOUBLE.length);
+                const newLength = openQuote.length + closeQuote.length;
+                indexAdjustment += (newLength - oldLength);
+            }
+        }
+        // Reverse the bits encoded count as we iterated backwards over bits
+        // No, currentBitIndex tracks how many bits we *attempted* to encode from the start.
+        // bitsEncoded should reflect how many sites we processed.
+
+        // The number of bits successfully encoded is the number of sites we processed up to the available bits.
+        bitsEncoded = Math.min(potentialSites.length, bits.length);
+
+
+        return { modifiedText, bitsEncoded };
     }
 
-    /**
-     * Extract bits from text that was encoded with quote styles.
-     * @param content Encoded text content.
-     * @returns Promise resolving to the extracted bits or null.
-     */
-    async extract(content: string): Promise<boolean[] | null> {
-        const pairs = this.findQuotePairs(content);
-        if (pairs.length === 0) {
-            return []; // Return empty array if no pairs found
-        }
-
+    extract(text: string): boolean[] {
         const extractedBits: boolean[] = [];
-        for (const pair of pairs) {
-            const bit = this.getBitFromQuoteStyle(pair.opening.char, pair.closing.char);
-            extractedBits.push(bit);
-        }
+        let inQuote = false;
+        let potentialBit: boolean | null = null;
 
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            if (!inQuote) {
+                if (char === CURLY_DOUBLE_OPEN) {
+                    potentialBit = true; // Assume bit is true if curly quotes start
+                    inQuote = true;
+                } else if (char === STRAIGHT_DOUBLE) {
+                    potentialBit = false; // Assume bit is false if straight quotes start
+                    inQuote = true;
+                }
+            } else {
+                // Check for closing quote matching the opening style
+                if (potentialBit === true && char === CURLY_DOUBLE_CLOSE) {
+                    extractedBits.push(true);
+                    inQuote = false;
+                    potentialBit = null;
+                } else if (potentialBit === false && char === STRAIGHT_DOUBLE) {
+                    extractedBits.push(false);
+                    inQuote = false;
+                    potentialBit = null;
+                } else if (char === CURLY_DOUBLE_OPEN || char === STRAIGHT_DOUBLE || char === CURLY_DOUBLE_CLOSE /* Handle unexpected closer */) {
+                    // Mismatched or nested quote? Ignore this pair for simplicity.
+                    // Or potentially an unclosed quote followed by a new one.
+                    inQuote = false; // Reset state
+                    potentialBit = null;
+                    // Re-evaluate current char as a potential opener
+                    i--;
+                }
+                // Consider edge case: end of text while still inQuote? Discard potential bit.
+            }
+        }
         return extractedBits;
     }
 
-    /**
-     * Find matching quotation pairs in text.
-     * Improved logic to handle nested quotes better.
-     */
-    private findQuotePairs(text: string): QuotePair[] {
-        const pairs: QuotePair[] = [];
-        const stack: QuotePosition[] = [];
-        const quoteCharsRegex = /['"“”‘’]/g; // Include curly quotes if used
-        let match;
-
-        while ((match = quoteCharsRegex.exec(text)) !== null) {
-            const index = match.index;
-            const char = match[0];
-            const currentPos: QuotePosition = { index, char };
-
-            const top = stack.length > 0 ? stack[stack.length - 1] : null;
-
-            if (top && this.isMatchingPair(top.char, char)) {
-                // Found a closing quote matching the top of the stack
-                const openingPos = stack.pop()!;
-                pairs.push({
-                    opening: openingPos,
-                    closing: currentPos,
-                    content: text.substring(openingPos.index + 1, currentPos.index),
-                    originalOpenChar: openingPos.char, // Store original chars
-                    originalCloseChar: currentPos.char,
-                });
-            } else if (this.isOpeningQuote(char)) {
-                // Found an opening quote, push onto stack
-                stack.push(currentPos);
-            }
-        }
-
-        // Sort pairs by their appearance order (opening index)
-        pairs.sort((a, b) => a.opening.index - b.opening.index);
-        return pairs;
-    }
-
-    /**
-     * Get appropriate quote style for encoded bit based on configuration.
-     */
-    private getQuoteStyleForBit(bit: boolean): { openChar: string; closeChar: string } {
-        const useSmart = this.configuration.useSmartQuotes;
-        const preferDouble = this.configuration.preferDoubleQuotes;
-
-        // Determine target style: double or single
-        const useDouble = (bit === preferDouble); // If bit matches preference, use double
-
-        if (useDouble) {
-            return useSmart
-                ? { openChar: this.curlyDoubleOpenQuote, closeChar: this.curlyDoubleCloseQuote }
-                : { openChar: this.straightDoubleQuote, closeChar: this.straightDoubleQuote };
-        } else {
-            return useSmart
-                ? { openChar: this.curlySingleOpenQuote, closeChar: this.curlySingleCloseQuote }
-                : { openChar: this.straightSingleQuote, closeChar: this.straightSingleQuote };
-        }
-    }
-
-    /**
-     * Determine bit value from quote style based on configuration.
-     */
-    private getBitFromQuoteStyle(openChar: string, closeChar: string): boolean {
-        const preferDouble = this.configuration.preferDoubleQuotes;
-
-        const isDouble =
-            (openChar === this.straightDoubleQuote && closeChar === this.straightDoubleQuote) ||
-            (openChar === this.curlyDoubleOpenQuote && closeChar === this.curlyDoubleCloseQuote);
-
-        // If preferDouble=true, double quotes mean bit=1, single mean bit=0
-        // If preferDouble=false, double quotes mean bit=0, single mean bit=1
-        return isDouble === preferDouble;
-    }
-
-    /** Check if character is an opening quote */
-    private isOpeningQuote(char: string): boolean {
-        return char === this.straightDoubleQuote ||
-               char === this.straightSingleQuote ||
-               char === this.curlyDoubleOpenQuote ||
-               char === this.curlySingleOpenQuote;
-    }
-
-    /** Check if character is a closing quote */
-    private isClosingQuote(char: string): boolean {
-        return char === this.straightDoubleQuote ||
-               char === this.straightSingleQuote ||
-               char === this.curlyDoubleCloseQuote ||
-               char === this.curlySingleCloseQuote;
-    }
-
-    /** Check if opening and closing quotes form a matching pair type */
-    private isMatchingPair(openChar: string, closeChar: string): boolean {
-        return (
-            (openChar === this.straightSingleQuote && closeChar === this.straightSingleQuote) ||
-            (openChar === this.straightDoubleQuote && closeChar === this.straightDoubleQuote) ||
-            (openChar === this.curlySingleOpenQuote && closeChar === this.curlySingleCloseQuote) ||
-            (openChar === this.curlyDoubleOpenQuote && closeChar === this.curlyDoubleCloseQuote)
-        );
-    }
+    // Implement CarrierTechnique methods
+    getDetectability(): number { return this.detectability; }
+    getCapacity(text: string): number { return this.estimate(text); }
+    getNaturalness(): number { return 0.8; } // Curly quotes often preferred
+    encode(text: string, bits: boolean[]): { modifiedText: string; bitsEncoded: number } { return this.apply(text, bits); }
+    getRobustness(): number { return 0.4; } // Easily normalized by editors/formatters
 }
 
-/**
- * Demonstrate the quote style carrier (Updated)
- *
- * @param text Sample text containing quotations
- * @param bits Bits to encode
- */
-export async function demonstrateQuoteStyleCarrier(text: string, bits: boolean[]): Promise<void> {
-    console.log("=== QUOTE STYLE CARRIER DEMO ===");
-
-    // Create carrier instance
-    const carrier = new QuoteStyleCarrier({ useSmartQuotes: false, preferDoubleQuotes: true });
-
-    try {
-        // Analyze capacity
-        const metrics = await carrier.analyzeCapacity(text);
-        console.log(`Carrier: ${carrier.name}`);
-        console.log(`Estimated capacity: ${metrics.capacity} bits`);
-        console.log(`Estimated metrics: Detectability=${metrics.detectability.toFixed(2)}, Robustness=${metrics.robustness.toFixed(2)}, Naturalness=${metrics.naturalness.toFixed(2)}`);
-
-        // Encode bits
-        console.log(`\nEncoding ${bits.length} bits: [${bits.map(b => b ? 1 : 0).join('')}]`);
-        console.log(`Original text (first 100 chars):\n${text.substring(0, 100)}...`);
-
-        const encodeResult = await carrier.encode(text, bits);
-
-        console.log(`\nModified text (first 100 chars):\n${encodeResult.modifiedContent.substring(0, 100)}...`);
-        console.log(`Bits encoded reported: ${encodeResult.bitsEncoded}`);
-
-        if (encodeResult.bitsEncoded < bits.length) {
-            console.warn(`Warning: Not all bits may have been encoded (${encodeResult.bitsEncoded}/${bits.length})`);
-        }
-        if (encodeResult.modifiedContent === text && encodeResult.bitsEncoded > 0) {
-            console.warn("Warning: Carrier reported bits encoded but text was not modified.");
-        }
-        if (encodeResult.modifiedContent !== text && encodeResult.bitsEncoded === 0) {
-            console.warn("Warning: Carrier modified text but reported 0 bits encoded.");
-        }
-
-        // Extract bits
-        const extractedBits = await carrier.extract(encodeResult.modifiedContent);
-
-        if (extractedBits) {
-            console.log(`\nExtracted bits (${extractedBits.length}): [${extractedBits.map(b => b ? 1 : 0).join('')}]`);
-
-            // Verify correctness up to the number of bits reportedly encoded
-            const originalBitsToCompare = bits.slice(0, encodeResult.bitsEncoded);
-            const extractedBitsToCompare = extractedBits.slice(0, encodeResult.bitsEncoded);
-
-            let match = originalBitsToCompare.length === extractedBitsToCompare.length;
-            if (match) {
-                for (let i = 0; i < originalBitsToCompare.length; i++) {
-                    if (originalBitsToCompare[i] !== extractedBitsToCompare[i]) {
-                        match = false;
-                        break;
-                    }
-                }
-            }
-            console.log(`Extraction matches encoded portion: ${match ? 'YES' : 'NO'}`);
-            if (!match) {
-                console.log("Original bits: ", originalBitsToCompare.map(b => b ? 1 : 0).join(''));
-                console.log("Extracted bits:", extractedBitsToCompare.map(b => b ? 1 : 0).join(''));
-            }
-        } else {
-            console.error("\nExtraction failed, returned null.");
-        }
-
-    } catch (error) {
-        console.error("\n--- DEMO FAILED ---");
-        if (error instanceof Error) {
-            console.error(`Error during demonstration: ${error.message}`);
-            if (error.stack) {
-                console.error(error.stack);
-            }
-        } else {
-            console.error("An unexpected error occurred during demonstration:", error);
-        }
-    }
-
-    console.log("\n=== DEMO COMPLETE ===");
-}
-
-// Example Usage:
-// const sampleText = "He said, \"This is 'important'.\" Then she asked, 'Really?'";
-// const sampleBits = [true, false, true, false]; // 1 0 1 0
-// demonstrateQuoteStyleCarrier(sampleText, sampleBits);
+// Add ApiNotes.md for this file
+// ```markdown
+// // filepath: /home/files/git/Stylometrics/quote_style_carrier.ApiNotes.md
+// # Quote Style Carrier - ApiNotes
+//
+// ## Design
+// Encodes data by switching between straight (`"`) and curly (`“”`) double quotation marks.
+// - Bit `1` (true) is represented by curly quotes (`“”`).
+// - Bit `0` (false) is represented by straight quotes (`"`).
+//
+// ## Behavior
+// - `estimate`: Counts pairs of straight or curly quotes as potential sites.
+// - `apply`: Finds all quote pairs (straight or curly). Iterates through potential sites and input bits *backwards* through the text to simplify index management during replacement. Replaces quote style if it doesn't match the target bit. Correctly reports `bitsEncoded` based on the minimum of available sites and input bits.
+// - `extract`: Iterates through text, identifying quote pairs and determining the bit based on whether they are straight or curly. Basic handling for mismatched/nested quotes.
+//
+// ## Rationale
+// Quote style is a subtle feature often overlooked but easily manipulated. Curly quotes are common in published text, straight quotes in code/plain text.
+//
+// ## Constraints
+// - Assumes standard English quote pairing.
+// - Sensitive to text normalization tools that enforce a single quote style.
+// - Current implementation might still misinterpret complex quoting scenarios (deeply nested, mixed single/double).
+// - Does not handle single quotes.
+// ```

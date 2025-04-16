@@ -66,3 +66,44 @@ const result = await runPrompt("stylometric_fingerprinter", {
 })
 
 console.log(result.text) // Output: Newly generated text mimicking the style, with embedded data.
+```
+
+## Stylometric Carriers
+
+### Overview
+
+The stylometric carriers are methods used to embed binary data into text features. These carriers are implemented in the `StylometricCarrier` class and provide diverse, testable methods for capacity estimation, application, and extraction logic.
+
+### Available Carriers
+
+1. **Synonym Choice Carrier**: Encodes bits by choosing synonyms based on payload.
+2. **Punctuation Style Carrier**: Encodes bits using the presence or absence of the Oxford comma.
+3. **Whitespace Style Carrier**: Encodes bits using single/double spaces after periods.
+4. **Voice Style Carrier**: Encodes bits by subtly shifting narrative voice (requires advanced NLP, not fully implemented).
+5. **Description Detail Carrier**: Encodes bits by adding/removing descriptive words (requires advanced NLP, not fully implemented).
+6. **Counterpoint Phrase Carrier**: Encodes bits by inserting/removing counterpoint phrases.
+
+### Implementation Notes
+
+- **Synonym Choice Carrier**: Uses a basic thesaurus structure to encode bits by substituting synonyms.
+- **Punctuation Style Carrier**: Modifies text based on the presence or absence of the Oxford comma in lists.
+- **Whitespace Style Carrier**: Encodes bits using single or double spaces after periods.
+- **Voice Style Carrier**: Requires advanced NLP for passive/active voice detection and transformation.
+- **Description Detail Carrier**: Requires NLP for adjective/adverb identification and modification.
+- **Counterpoint Phrase Carrier**: Inserts or removes counterpoint phrases in sentences.
+
+### Limitations
+
+- Some carriers require advanced NLP capabilities and are not fully implemented.
+- Extraction logic for certain carriers is unreliable and requires further development.
+
+### Example Usage
+
+```javascript
+const carrier = new StylometricCarrier({ carriers: ['synonym-choice', 'punctuation-style'] });
+const text = "The quick brown fox jumps over the lazy dog. It was a happy day.";
+const payload = Buffer.from("test");
+const { modifiedText } = await carrier.encodePayload(text, payload);
+const extractedPayload = await carrier.extractPayload(modifiedText);
+console.log(extractedPayload); // Output: Original payload if extraction is successful.
+```

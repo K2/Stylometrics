@@ -1,0 +1,3 @@
+ * const wrappedText = wrapText("This is a sample text.", 20);
+ * console.log(wrappedText);
+ *

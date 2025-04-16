@@ -1,96 +1,22 @@
 /**
- * Steganographic Encoding Demo
- * 
- * This module demonstrates the combined use of zero-width and stylometric 
- * steganography techniques to provide redundant encoding with high detection
- * resistance.
- * 
- * Flow: Original Content → Encode with Method 1 → Encode with Method 2 → Sign → Distribute
+ * Steganographic Encoding Demo (Multilayer: Zero-Width + Stylometric)
+ *
+ * This module demonstrates the combined use of zero-width and simplified stylometric
+ * steganography techniques to provide redundant encoding.
+ *
+ * Flow: Original Content → Encode Zero-Width → Encode Stylometric → Sign → Distribute
  */
 
 import crypto from 'crypto';
+// Import the canonical KeyManager
+import { KeyManager } from './safety_embedded_word.genai.mts'; // Updated import
 import { hideDataInText, extractHiddenData } from './safety_embedded_word.genai.mts';
 import { hideDataStylometrically, extractHiddenStylometricData } from './safety_stylometric_encoder.genai.mts';
 
 /**
- * Represents a cryptographic key pair with identifier
- */
-interface KeyPair {
-  publicKey: string;
-  privateKey: string;
-  keyId: string;
-}
-
-/**
- * Manages cryptographic keys for multiple identities
- */
-export class KeyManager {
-  private keyPairs: Map<string, KeyPair> = new Map();
-  
-  /**
-   * Generate a new key pair for an identity
-   * @param name Identity name
-   * @returns Key pair object
-   */
-  generateNewKeyPair(name: string): KeyPair {
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
-      modulusLength: 512,
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-    });
-    
-    const keyId = crypto.createHash('sha256').update(publicKey).digest('hex').substring(0, 8);
-    const keyPair = { publicKey, privateKey, keyId };
-    this.keyPairs.set(name, keyPair);
-    return keyPair;
-  }
-  
-  /**
-   * Get a key pair by identity name
-   * @param name Identity name
-   * @returns Key pair or undefined if not found
-   */
-  getKeyPair(name: string): KeyPair | undefined {
-    return this.keyPairs.get(name);
-  }
-  
-  /**
-   * Sign content with a specific identity's key
-   * @param name Identity name 
-   * @param content Content to sign
-   * @returns Base64 signature or null if key not found
-   */
-  signWithKey(name: string, content: string): string | null {
-    const keyPair = this.keyPairs.get(name);
-    if (!keyPair) return null;
-    
-    const signer = crypto.createSign('SHA256');
-    signer.update(content);
-    return signer.sign(keyPair.privateKey, 'base64');
-  }
-  
-  /**
-   * Verify content against all known keys
-   * @param content Content to verify
-   * @param signature Signature to check
-   * @returns Identity name that signed the content, or null if not verified
-   */
-  verifySignature(content: string, signature: string): string | null {
-    for (const [name, keyPair] of this.keyPairs.entries()) {
-      const verifier = crypto.createVerify('SHA256');
-      verifier.update(content);
-      if (verifier.verify(keyPair.publicKey, signature, 'base64')) {
-        return name;
-      }
-    }
-    return null;
-  }
-}
-
-/**
  * Result of encoded content package
  */
-interface EncodedPackage {
+export interface EncodedPackage { // Export interface
   content: string;
   signature: string;
 }
@@ -98,13 +24,14 @@ interface EncodedPackage {
 /**
  * Result of decoded content
  */
-interface DecodedResult {
+export interface DecodedResult { // Export interface
   metadata: any;
   signerName: string | null;
+  extractionSource?: 'stylometric' | 'zero-width' | 'none'; // Added source info
 }
 
 /**
- * Encode content with multiple layers of steganography
+ * Encode content with multiple layers of steganography (Zero-Width then Stylometric)
  * @param originalContent Original text content
  * @param metadata Metadata to embed
  * @param keyManager Key manager for signing
@@ -120,33 +47,38 @@ export const encodeMultilayerContent = (
   try {
     // Convert metadata to JSON string
     const metadataStr = JSON.stringify(metadata);
-    
+
     // Layer 1: Hide metadata using zero-width characters
     const contentWithZeroWidth = hideDataInText(originalContent, metadataStr);
-    
-    // Layer 2: Apply stylometric encoding with the same metadata
+    console.log(`Applied zero-width encoding. Length: ${contentWithZeroWidth.length}`);
+
+
+    // Layer 2: Apply stylometric encoding (simplified version) with the same metadata
     // This provides redundancy in case one encoding is stripped
     const contentWithBothEncodings = hideDataStylometrically(contentWithZeroWidth, metadataStr);
-    
+    console.log(`Applied stylometric encoding. Length: ${contentWithBothEncodings.length}`);
+
+
     // Sign the final content
     const signature = keyManager.signWithKey(signerName, contentWithBothEncodings);
     if (!signature) {
       console.error(`Failed to sign content: key for ${signerName} not found`);
       return null;
     }
-    
+
     return {
       content: contentWithBothEncodings,
       signature
     };
   } catch (error) {
-    console.error("Error encoding content:", error);
+    console.error("Error encoding multilayer content:", error);
     return null;
   }
 };
 
 /**
  * Decode and verify content with multiple steganographic layers
+ * Attempts Stylometric first, then Zero-Width as fallback.
  * @param encodedContent Content to decode
  * @param signature Signature to verify
  * @param keyManager Key manager for verification
@@ -161,49 +93,64 @@ export const decodeMultilayerContent = (
     // Verify signature first
     const signerName = keyManager.verifySignature(encodedContent, signature);
     if (!signerName) {
-      console.error("Could not verify content signature with any known key");
-      return { metadata: null, signerName: null };
+      // Don't log error here, let the caller decide. Return indication of failure.
+      console.warn("Could not verify content signature with any known key.");
+      return { metadata: null, signerName: null, extractionSource: 'none' };
     }
-    
+    console.log(`Signature verified. Signed by: ${signerName}`);
+
+
     // Try both extraction methods
     let extractedMetadata = null;
-    
-    // Try stylometric extraction first
+    let extractionSource: DecodedResult['extractionSource'] = 'none';
+
+    // Try stylometric extraction first (as it might be more robust to some changes)
     const stylometricData = extractHiddenStylometricData(encodedContent);
     if (stylometricData) {
       try {
         extractedMetadata = JSON.parse(stylometricData);
-        console.log("Extracted metadata using stylometric method");
+        extractionSource = 'stylometric';
+        console.log("✓ Extracted metadata using stylometric method");
       } catch (e) {
-        console.log("Stylometric data was not valid JSON");
+        console.warn("⚠ Stylometric data found but was not valid JSON. Falling back...");
+        console.warn("  Stylometric raw data:", stylometricData.substring(0, 100) + "..."); // Log snippet
       }
+    } else {
+         console.log("No valid stylometric data found.");
     }
-    
-    // If stylometric failed, try zero-width extraction
+
+    // If stylometric failed or data was invalid JSON, try zero-width extraction
     if (!extractedMetadata) {
+      console.log("Attempting zero-width extraction...");
       const zeroWidthData = extractHiddenData(encodedContent);
       if (zeroWidthData) {
         try {
           extractedMetadata = JSON.parse(zeroWidthData);
-          console.log("Extracted metadata using zero-width method");
+          extractionSource = 'zero-width';
+          console.log("✓ Extracted metadata using zero-width method");
         } catch (e) {
-          console.log("Zero-width data was not valid JSON");
+          console.warn("⚠ Zero-width data found but was not valid JSON.");
+           console.warn("  Zero-width raw data:", zeroWidthData.substring(0, 100) + "..."); // Log snippet
         }
+      } else {
+           console.log("No valid zero-width data found.");
       }
     }
-    
+
     if (!extractedMetadata) {
-      console.error("Could not extract metadata using any method");
-      return { metadata: null, signerName };
+      console.error("Could not extract metadata using any available method.");
+      // Return signer name even if metadata extraction fails, as signature was valid
+      return { metadata: null, signerName, extractionSource: 'none' };
     }
-    
+
     return {
       metadata: extractedMetadata,
-      signerName
+      signerName,
+      extractionSource
     };
   } catch (error) {
-    console.error("Error decoding content:", error);
-    return null;
+    console.error("Error decoding multilayer content:", error);
+    return null; // Indicate failure
   }
 };
 
@@ -211,14 +158,16 @@ export const decodeMultilayerContent = (
  * Demo function to show multilayer encoding and decoding
  */
 export const runMultilayerDemo = (): void => {
-  console.log("MULTILAYER STEGANOGRAPHIC DEMO");
-  console.log("==============================\n");
-  
+  console.log("\nMULTILAYER STEGANOGRAPHIC DEMO (Zero-Width + Stylometric)");
+  console.log("=========================================================\n");
+
   // Setup key manager and identities
   const keyManager = new KeyManager();
-  keyManager.generateNewKeyPair("alice");
+  const alice = keyManager.generateNewKeyPair("alice"); // Get keypair info
   keyManager.generateNewKeyPair("bob");
-  
+  console.log(`Generated keys for alice (ID: ${alice.keyId}) and bob.`);
+
+
   // Original content
   const originalContent = `
 This is an example of a document that contains important information.
@@ -228,58 +177,69 @@ The information in this document appears normal to human readers while containin
 hidden metadata that can be extracted programmatically.
 
 This approach provides plausible deniability while enabling content tracking and
-verification through cryptographic signatures.
+verification through cryptographic signatures. It needs enough sentences for the stylometric part.
+Let's add another sentence here just in case. And one more for good measure.
   `;
-  
+
   // Metadata to embed
   const metadata = {
     creator: "alice",
+    keyId: alice.keyId, // Include keyId in metadata
     timestamp: new Date().toISOString(),
     contentId: crypto.randomBytes(4).toString('hex'),
     classification: "demonstration",
     version: "1.0"
   };
-  
+
   console.log("Original content length:", originalContent.length);
   console.log("Metadata to hide:", metadata);
-  
+
   // Encode content
+  console.log("\nENCODING CONTENT");
+  console.log("================");
   const encodedPackage = encodeMultilayerContent(originalContent, metadata, keyManager, "alice");
   if (!encodedPackage) {
-    console.error("Failed to encode content");
+    console.error("FATAL: Failed to encode content");
     return;
   }
-  
+
   console.log("\nEncoded content length:", encodedPackage.content.length);
-  console.log("Signature:", encodedPackage.signature);
-  
+  console.log("Signature:", encodedPackage.signature.substring(0, 60) + "..."); // Show partial signature
+
   // Decode and verify
   console.log("\nDECODING CONTENT");
-  console.log("================\n");
-  
+  console.log("================");
+
   const decodedResult = decodeMultilayerContent(encodedPackage.content, encodedPackage.signature, keyManager);
   if (!decodedResult) {
-    console.error("Failed to decode content");
+    console.error("FATAL: Failed to decode content");
     return;
   }
-  
-  console.log("Verified signer:", decodedResult.signerName);
+
+  console.log("\n--- Verification Results ---");
+  console.log("Verified signer:", decodedResult.signerName || "!! VERIFICATION FAILED !!");
+  console.log("Extraction source:", decodedResult.extractionSource);
   console.log("Extracted metadata:", decodedResult.metadata);
-  
+
   // Validate metadata integrity
-  console.log("\nMetadata integrity check:");
-  if (decodedResult.metadata) {
+  console.log("\n--- Metadata Integrity Check ---");
+  if (decodedResult.metadata && decodedResult.signerName === "alice") {
     let matches = true;
     for (const [key, value] of Object.entries(metadata)) {
       if (decodedResult.metadata[key] !== value) {
         matches = false;
-        console.log(`- ${key}: MISMATCH (expected ${value}, got ${decodedResult.metadata[key]})`);
+        console.log(`  ✗ ${key}: MISMATCH (expected ${value}, got ${decodedResult.metadata[key]})`);
+      } else {
+         console.log(`  ✓ ${key}: Match`);
       }
     }
-    if (matches) {
-      console.log("✓ All metadata values match the original data");
-    }
+    console.log(matches ? "\n✓ All metadata values match the original data" : "\n✗ Metadata mismatch detected!");
+  } else if (decodedResult.signerName !== "alice") {
+      console.log("✗ Metadata check skipped: Signer verification failed or metadata missing.");
+  } else {
+       console.log("✗ Metadata check skipped: Metadata extraction failed.");
   }
+   console.log("=========================================================");
 };
 
 // Auto-run the demonstration if this file is executed directly

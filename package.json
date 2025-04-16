@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "compromise": "^14.10.0",
+    "@tensorflow/tfjs-node": "^4.22.0"
+  }
+}

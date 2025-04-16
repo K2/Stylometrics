@@ -1,311 +1,245 @@
 /**
- * Stylometric Steganography Module
- * 
- * This module provides linguistic steganography capabilities by encoding data into
+ * Stylometric Steganography Module (Simplified Version)
+ *
+ * This module provides basic linguistic steganography capabilities by encoding data into
  * natural language text patterns without using invisible characters. It manipulates
- * sentence structure, word patterns, and linguistic features to embed data while 
- * maintaining readability and plausible deniability.
- * 
- * Flow: 
+ * sentence structure/word patterns to embed data while maintaining readability.
+ *
+ * NOTE: This is a simplified implementation. For more advanced and diverse techniques,
+ * refer to `stylometric_carrier.genai.mts`. This version uses a basic
+ * adverb presence/absence mechanism.
+ *
+ * Flow:
  * Input text → Split into units → Encode bits by pattern transforms → Combine → Output
  */
 
-import crypto from 'crypto';
+import crypto from 'crypto'; // Not used in current simplified version, but kept for potential future use
+import assert from 'assert';
 
 /**
- * Common word categories used for stylometric transformations
+ * Function to convert data to bits, potentially adding length prefix
+ * @param data String data to convert
+ * @returns Array of boolean bits
  */
-interface CommonWords {
-    articles: string[];
-    adjectives: {
-        1: string[];
-        2: string[];
-        3: string[];
-        [key: number]: string[];
-    };
-    adverbs: string[];
-    conjunctions: string[];
+function dataToBitsWithLength(data: string): boolean[] {
+    const buffer = Buffer.from(data, 'utf-8');
+    const bits: boolean[] = [];
+    const dataLengthInBits = buffer.length * 8;
+
+    // Encode length first (e.g., using 16 bits = 2 bytes)
+    const lengthBuffer = Buffer.alloc(2);
+    lengthBuffer.writeUInt16BE(dataLengthInBits, 0); // Max length ~65k bits
+
+    for (let i = 0; i < lengthBuffer.length; i++) {
+        const byte = lengthBuffer[i];
+        for (let j = 7; j >= 0; j--) { // MSB first for length
+            bits.push(((byte >> j) & 1) === 1);
+        }
+    }
+
+    // Encode actual data
+    for (let i = 0; i < buffer.length; i++) {
+        const byte = buffer[i];
+        for (let j = 7; j >= 0; j--) { // Keep MSB first for consistency or LSB if required by carrier
+            bits.push(((byte >> j) & 1) === 1);
+        }
+    }
+    return bits;
 }
 
 /**
- * Sentence pattern templates for encoding
+ * Function to convert bits back to data, reading length first
+ * @param bits Array of boolean bits
+ * @returns Decoded string or null if decoding fails
  */
-interface SentencePatterns {
-    simple: string[];
-    compound: string[];
-    complex: string[];
-    [key: string]: string[];
+function bitsToDataWithLength(bits: boolean[]): string | null {
+    if (bits.length < 16) { // Need at least 16 bits for the length prefix
+        console.warn("Not enough bits to decode length prefix.");
+        return null;
+    }
+
+    // Decode length (16 bits)
+    let lengthValue = 0;
+    for (let i = 0; i < 16; i++) {
+        lengthValue = (lengthValue << 1) | (bits[i] ? 1 : 0);
+    }
+
+    const expectedTotalBits = 16 + lengthValue;
+    if (bits.length < expectedTotalBits) {
+        console.warn(`Incomplete data: Expected ${expectedTotalBits} bits (16 + ${lengthValue}), got ${bits.length}.`);
+        lengthValue = bits.length - 16; // Adjust length to what's available
+        if (lengthValue <= 0) return null;
+    }
+
+    const dataBits = bits.slice(16, expectedTotalBits);
+    const numBytes = Math.ceil(lengthValue / 8);
+    const buffer = Buffer.alloc(numBytes);
+
+    for (let i = 0; i < numBytes; i++) {
+        let byteValue = 0;
+        for (let j = 0; j < 8; j++) {
+            const bitIndex = i * 8 + j;
+            if (bitIndex < dataBits.length) {
+                byteValue = (byteValue << 1) | (dataBits[bitIndex] ? 1 : 0);
+            } else {
+                byteValue <<= 1; // Pad with 0 if dataBits is not multiple of 8
+            }
+        }
+        buffer[i] = byteValue;
+    }
+
+    return buffer.toString('utf-8');
 }
 
-// Common English words for each category we can substitute
-const COMMON_WORDS: CommonWords = {
-    // Articles with word lengths (1: a, 2: an, 3: the)
-    articles: ['a', 'an', 'the'],
-    
-    // Common adjectives organized by syllable count
-    adjectives: {
-        1: ['big', 'small', 'great', 'good', 'bad', 'quick', 'slow', 'cold', 'hot', 'new'],
-        2: ['better', 'faster', 'slower', 'larger', 'smaller', 'colder', 'warmer', 'nicer'],
-        3: ['beautiful', 'excellent', 'wonderful', 'difficult', 'important', 'practical'],
-    },
-    
-    // Common adverbs that can be added/removed to encode bits
-    adverbs: ['very', 'quite', 'rather', 'somewhat', 'extremely', 'fairly', 'pretty', 'really'],
-    
-    // Sentence conjunctions (joining words)
-    conjunctions: ['and', 'but', 'or', 'so', 'yet', 'for', 'nor']
-};
-
-// Sentence templates with various structures for encoding
-const SENTENCE_PATTERNS: SentencePatterns = {
-    // Basic simple pattern
-    simple: [
-        "The {adj1} {noun} {verb}.",
-        "{noun} {verb} {adverb}.",
-        "A {adj1} {noun} {verb} {adverb}."
-    ],
-    
-    // Compound patterns
-    compound: [
-        "The {adj1} {noun} {verb}, {conj} the {adj2} {noun2} {verb2}.",
-        "{noun} {verb} {adverb}, {conj} {noun2} {verb2}."
-    ],
-    
-    // Complex patterns with subordinate clauses
-    complex: [
-        "Although the {adj1} {noun} {verb}, the {adj2} {noun2} {verb2}.",
-        "When {noun} {verb}, the {adj1} {noun2} {verb2} {adverb}."
-    ]
-};
-
 /**
- * Encodes a bit string by manipulating sentence structures and word choices
+ * Encodes a bit string by manipulating sentence structures (presence/absence of a marker adverb).
  * @param text Original text content to embed data within
  * @param bitsToEncode Binary string of bits to encode
- * @returns Modified text with embedded bits
+ * @returns Modified text with embedded bits and count of bits encoded
  */
-const encodeStylometricBits = (text: string, bitsToEncode: string): string => {
-    // Split text into sentences
+const encodeStylometricBits = (text: string, bitsToEncode: boolean[]): { modifiedText: string, bitsEncoded: number } => {
     const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-    if (sentences.length < bitsToEncode.length) {
-        throw new Error("Text too short to encode the required bits");
+    if (sentences.length === 0) {
+        console.warn("[encodeStylometricBits] No sentences found in text.");
+        return { modifiedText: text, bitsEncoded: 0 };
     }
-    
+
+    const capacity = Math.max(0, sentences.length - 1);
+    if (capacity < bitsToEncode.length) {
+        console.warn(`[encodeStylometricBits] Text capacity (${capacity} bits) may be insufficient for payload (${bitsToEncode.length} bits).`);
+    }
+
     let encodedText = '';
     let bitIndex = 0;
-    
-    // Process each sentence to encode bits
-    for (let i = 0; i < sentences.length && bitIndex < bitsToEncode.length; i++) {
-        const sentence = sentences[i].trim();
-        const bit = bitsToEncode[bitIndex];
-        
-        // Skip sentences that are too short or lack proper structure
-        if (sentence.split(' ').length < 3) {
-            encodedText += sentence + ' ';
+    const markerAdverb = ' actually';
+    const markerRegex = /\bactually\b/i;
+
+    const startIndex = 1;
+    encodedText += sentences[0] || '';
+
+    for (let i = startIndex; i < sentences.length; i++) {
+        let currentSentence = sentences[i].trim();
+        if (currentSentence.split(' ').length < 4 || bitIndex >= bitsToEncode.length) {
+            encodedText += (i > 0 ? ' ' : '') + currentSentence;
             continue;
         }
-        
-        // Encode bit 0: Use simple sentence structure or active voice
-        // Encode bit 1: Use complex sentence structure or passive voice
-        if (bit === '0') {
-            // Simple transformations for bit 0
-            let modified = sentence;
-            
-            // Remove certain adverbs if present
-            COMMON_WORDS.adverbs.forEach(adverb => {
-                if (Math.random() > 0.7 && modified.includes(' ' + adverb + ' ')) {
-                    modified = modified.replace(' ' + adverb + ' ', ' ');
-                }
-            });
-            
-            // End sentences with periods for bit 0
-            if (modified.endsWith('!') || modified.endsWith('?')) {
-                modified = modified.slice(0, -1) + '.';
+
+        const bit = bitsToEncode[bitIndex];
+        let modifiedCurrent = currentSentence;
+        let appliedModification = false;
+
+        const hasMarker = markerRegex.test(currentSentence);
+
+        if (bit) {
+            if (!hasMarker) {
+                const words = currentSentence.split(' ');
+                const insertPos = Math.min(2, words.length - 1);
+                words.splice(insertPos, 0, markerAdverb.trim());
+                modifiedCurrent = words.join(' ');
+                appliedModification = true;
+            } else {
+                appliedModification = true;
             }
-            
-            encodedText += modified + ' ';
         } else {
-            // Complex transformations for bit 1
-            let modified = sentence;
-            
-            // Add adverbs for bit 1
-            if (Math.random() > 0.7) {
-                const words = modified.split(' ');
-                const randomPosition = Math.floor(Math.random() * (words.length - 1)) + 1;
-                const randomAdverb = COMMON_WORDS.adverbs[Math.floor(Math.random() * COMMON_WORDS.adverbs.length)];
-                words.splice(randomPosition, 0, randomAdverb);
-                modified = words.join(' ');
+            if (hasMarker) {
+                modifiedCurrent = currentSentence.replace(markerRegex, '').replace(/\s{2,}/g, ' ');
+                appliedModification = true;
+            } else {
+                appliedModification = true;
             }
-            
-            // Use exclamation or question mark for bit 1
-            if (modified.endsWith('.')) {
-                modified = modified.slice(0, -1) + (Math.random() > 0.5 ? '!' : '?');
-            }
-            
-            encodedText += modified + ' ';
         }
-        
-        bitIndex++;
+
+        if (appliedModification) {
+            encodedText += (i > 0 ? ' ' : '') + modifiedCurrent;
+            bitIndex++;
+        } else {
+            encodedText += (i > 0 ? ' ' : '') + currentSentence;
+            console.warn(`[encodeStylometricBits] Could not apply bit ${bit} to sentence ${i}. Skipping bit.`);
+        }
     }
-    
-    // Add remaining sentences
-    for (let i = bitIndex; i < sentences.length; i++) {
-        encodedText += sentences[i] + ' ';
+
+    for (let i = startIndex + bitIndex; i < sentences.length; i++) {
+        if (sentences[i]) {
+            encodedText += (i > 0 ? ' ' : '') + sentences[i].trim();
+        }
     }
-    
-    return encodedText.trim();
+
+    if (bitIndex < bitsToEncode.length) {
+        console.warn(`[encodeStylometricBits] Encoding incomplete. Only ${bitIndex} of ${bitsToEncode.length} bits were encoded.`);
+    }
+
+    return { modifiedText: encodedText.trim(), bitsEncoded: bitIndex };
 };
 
 /**
  * Encodes data using paragraph structure and punctuation patterns
- * @param text Text to encode within
- * @param dataToEncode String data to hide
+ * @param originalText Text to encode within
+ * @param data String data to hide
  * @returns Text with stylometrically encoded data
- * @throws Error if text does not have enough paragraphs for encoding
  */
-export const hideDataStylometrically = (text: string, dataToEncode: string): string => {
-    // Convert data to binary
-    const binaryData = Array.from(dataToEncode)
-        .map(char => char.charCodeAt(0).toString(2).padStart(8, '0'))
-        .join('');
-    
-    // Encode length as 16-bit binary
-    const lengthBinary = binaryData.length.toString(2).padStart(16, '0');
-    
-    // Combine length header and data bits
-    const bitsToEncode = lengthBinary + binaryData;
-    
-    // Add marker signature at start (linguistic pattern variation)
+export function hideDataStylometrically(originalText: string, data: string): string {
+    assert(originalText != null, 'Original text must not be null');
+    assert(data != null, 'Data to hide must not be null');
+    const bitsToEncode = dataToBitsWithLength(data);
+    const { modifiedText, bitsEncoded } = encodeStylometricBits(originalText, bitsToEncode);
+    if (bitsEncoded < bitsToEncode.length) {
+        console.warn(`Stylometric encoding incomplete: Only ${bitsEncoded} of ${bitsToEncode.length} bits could be encoded.`);
+    }
     const markerText = "Please note the following information carefully. ";
-    
-    // Split text into paragraphs
-    const paragraphs = text.split('\n\n');
-    
-    // Ensure we have enough text to encode our data
-    if (paragraphs.length < 2) {
-        throw new Error("Text needs multiple paragraphs for stylometric encoding");
-    }
-    
-    // Encode the data into the paragraphs
-    let encodedText = "";
-    if (paragraphs[0].trim().length > 0) {
-        // Insert our marker at the beginning of the text
-        encodedText += markerText + paragraphs[0] + '\n\n';
-    } else {
-        encodedText += markerText + '\n\n';
-    }
-    
-    // Process middle paragraphs to encode our bits
-    for (let i = 1; i < paragraphs.length - 1; i++) {
-        if (paragraphs[i].trim().length > 0) {
-            encodedText += encodeStylometricBits(paragraphs[i], bitsToEncode) + '\n\n';
-            break; // Only encode in one paragraph for now
-        }
-    }
-    
-    // Add remaining paragraphs
-    for (let i = 2; i < paragraphs.length; i++) {
-        encodedText += paragraphs[i];
-        if (i < paragraphs.length - 1) {
-            encodedText += '\n\n';
-        }
-    }
-    
-    return encodedText;
-};
+    return markerText + modifiedText;
+}
 
 /**
- * Extracts bits from text based on stylometric patterns
+ * Extracts bits from text based on stylometric patterns (marker adverb presence/absence)
  * @param text Text with encoded data
- * @returns Extracted binary string or null if not found
+ * @returns Extracted binary string or null if not found or marker missing
  */
-const extractStylometricBits = (text: string): string | null => {
-    // Check for marker signature
-    if (!text.includes("Please note the following information carefully.")) {
+const extractStylometricBits = (text: string): boolean[] | null => {
+    const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+    if (sentences.length < 1) {
+        console.log("[extractStylometricBits] No sentences found.");
         return null;
     }
-    
-    // Split text into sentences
-    const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-    
-    let extractedBits = '';
-    
-    // Skip the first few sentences (marker area)
-    const startIndex = 2;
-    
-    // Process sentences to extract bits
+
+    const extractedBits: boolean[] = [];
+    const markerRegex = /\bactually\b/i;
+
+    const startIndex = 1;
+
     for (let i = startIndex; i < sentences.length; i++) {
         const sentence = sentences[i].trim();
-        
-        // Skip sentences that are too short
-        if (sentence.split(' ').length < 3) {
+        if (sentence.split(' ').length < 4) {
             continue;
         }
-        
-        // Check for bit 1 patterns
-        if ((sentence.endsWith('!') || sentence.endsWith('?')) || 
-            COMMON_WORDS.adverbs.some(adverb => sentence.includes(' ' + adverb + ' '))) {
-            extractedBits += '1';
-        } else {
-            // Default to bit 0
-            extractedBits += '0';
-        }
-        
-        // Break if we have at least 16 bits (the length header)
-        if (extractedBits.length >= 16) {
-            const lengthBits = extractedBits.substring(0, 16);
-            const dataLength = parseInt(lengthBits, 2);
-            
-            // If we have enough bits for the full data, stop
-            if (extractedBits.length >= 16 + dataLength) {
-                break;
-            }
-        }
+
+        const hasMarker = markerRegex.test(sentence);
+        extractedBits.push(hasMarker);
     }
-    
-    // Check if we have at least 16 bits for the length
-    if (extractedBits.length < 16) {
-        return null;
-    }
-    
+
     return extractedBits;
 };
 
 /**
  * Extracts hidden data from text with stylometric encoding
  * @param text Text to analyze
- * @returns Extracted string or null if not found
+ * @returns Extracted string or null if not found or decoding fails
  */
-export const extractHiddenStylometricData = (text: string): string | null => {
-    // Extract binary bits from the text
-    const extractedBits = extractStylometricBits(text);
-    if (!extractedBits || extractedBits.length < 16) {
+export function extractHiddenStylometricData(text: string): string | null {
+    assert(text != null, 'Text to extract from must not be null');
+    const markerText = "Please note the following information carefully.";
+    const markerIndex = text.indexOf(markerText);
+    if (markerIndex === -1) {
         return null;
     }
-    
-    // Extract length from first 16 bits
-    const lengthBits = extractedBits.substring(0, 16);
-    const dataLength = parseInt(lengthBits, 2);
-    
-    // Ensure we have enough bits
-    if (extractedBits.length < 16 + dataLength) {
+    const contentToDecode = text.substring(markerIndex + markerText.length).trimStart();
+
+    const extractedBits = extractStylometricBits(contentToDecode);
+    if (!extractedBits || extractedBits.length === 0) {
         return null;
     }
-    
-    // Extract data bits
-    const dataBits = extractedBits.substring(16, 16 + dataLength);
-    
-    // Convert binary to string
-    let result = '';
-    for (let i = 0; i < dataBits.length; i += 8) {
-        const byte = dataBits.substr(i, 8);
-        if (byte.length === 8) {
-            result += String.fromCharCode(parseInt(byte, 2));
-        }
-    }
-    
-    return result;
-};
+
+    return bitsToDataWithLength(extractedBits);
+}
 
 /**
  * Demonstrates the stylometric encoding/decoding process
@@ -313,17 +247,127 @@ export const extractHiddenStylometricData = (text: string): string | null => {
  * @param dataToHide The data to hide within the text
  */
 export const demonstrateStylometricEncoding = (originalText: string, dataToHide: string): void => {
+    console.log("=== STYLOMETRIC ENCODER DEMO (Simplified) ===");
     console.log("Original text:");
     console.log(originalText);
+    console.log("\nData to hide:", dataToHide);
     console.log("\n=== ENCODING DATA ===\n");
-    
+
     const encodedText = hideDataStylometrically(originalText, dataToHide);
-    console.log("Text with hidden data:");
+    console.log("Text with hidden data (stylometrically encoded):");
     console.log(encodedText);
     console.log("\n=== DECODING DATA ===\n");
-    
+
     const extractedData = extractHiddenStylometricData(encodedText);
     console.log("Extracted data:", extractedData);
-    console.log("Original data:", dataToHide);
-    console.log("Match:", extractedData === dataToHide);
+    console.log("Original data: ", dataToHide);
+
+    if (extractedData === null) {
+        console.log("Match: ✗ (Extraction failed)");
+    } else {
+        const extractedRelevant = extractedData.substring(0, dataToHide.length);
+        console.log(`Match (up to original length): ${extractedRelevant === dataToHide ? '✓' : '✗'}`);
+        if (extractedRelevant !== dataToHide) {
+            console.log(`  Expected: "${dataToHide}"`);
+            console.log(`  Got:      "${extractedRelevant}"`);
+        }
+        if (extractedData.length > dataToHide.length) {
+            console.log(`  (Extracted data has extra characters: "${extractedData.substring(dataToHide.length)}")`);
+        }
+    }
+    console.log("==============================================");
 };
+
+/**
+ * Adds unit tests for the simplified stylometric encoder/decoder.
+ * Suggestion: Use vitest or jest. Add to a master test suite.
+ * Example test structure:
+ * describe('Safety Stylometric Encoder (Simplified)', () => {
+ *
+ *   describe('Length Prefixing', () => {
+ *      it('should correctly encode data to bits with length (expected success)', () => {
+ *          const data = "Hi"; // 2 bytes = 16 bits
+ *          const bits = dataToBitsWithLength(data);
+ *          // Expected: 16 bits for length (value 16) + 16 bits for data
+ *          expect(bits.length).toBe(32);
+ *          // Check length prefix (16 = 0x0010)
+ *          const lengthBits = bits.slice(0, 16);
+ *          let lengthValue = 0;
+ *          for(let i=0; i<16; i++) lengthValue = (lengthValue << 1) | (lengthBits[i]?1:0);
+ *          expect(lengthValue).toBe(16);
+ *      });
+ *
+ *      it('should correctly decode bits with length back to data (expected success)', () => {
+ *          const data = "Test Data";
+ *          const bits = dataToBitsWithLength(data);
+ *          const decoded = bitsToDataWithLength(bits);
+ *          expect(decoded).toEqual(data);
+ *      });
+ *
+ *       it('should handle incomplete data during decoding (expected success)', () => {
+ *          const data = "Test Data";
+ *          const bits = dataToBitsWithLength(data);
+ *          const truncatedBits = bits.slice(0, bits.length - 5); // Remove last 5 bits
+ *          const decoded = bitsToDataWithLength(truncatedBits);
+ *          expect(decoded).not.toEqual(data); // Should be truncated
+ *          expect(data.startsWith(decoded!)).toBe(true); // Should match the beginning
+ *      });
+ *
+ *       it('should return null if bits are too short for length (expected success)', () => {
+ *          const bits = [true, false, true, false]; // Only 4 bits
+ *          const decoded = bitsToDataWithLength(bits);
+ *          expect(decoded).toBeNull();
+ *      });
+ *   });
+ *
+ *   describe('Adverb Carrier Logic', () => {
+ *      const text = "This is the first sentence. This sentence actually has the marker. This one does not. This one actually does too.";
+ *      const expectedBits = [true, false, true]; // Based on sentences 2, 3, 4
+ *
+ *      it('should extract bits based on adverb presence (expected success)', () => {
+ *          const bits = extractStylometricBits(text);
+ *          expect(bits).toEqual(expectedBits);
+ *      });
+ *
+ *      it('should encode bits by adding/removing adverb (expected success)', () => {
+ *          const original = "Sentence one. Sentence two needs a marker. Sentence three has one actually and needs it removed. Sentence four needs one.";
+ *          const bitsToEncode = [true, false, true];
+ *          const { modifiedText, bitsEncoded } = encodeStylometricBits(original, bitsToEncode);
+ *
+ *          expect(bitsEncoded).toBe(3);
+ *          // Check specific sentences for changes (this is approximate)
+ *          expect(modifiedText).toContain("Sentence two actually needs"); // Added
+ *          expect(modifiedText).not.toContain("three has one actually"); // Removed
+ *          expect(modifiedText).toContain("Sentence four actually needs"); // Added
+ *
+ *          // Verify extraction from modified text
+ *          const extracted = extractStylometricBits(modifiedText);
+ *          expect(extracted).toEqual(bitsToEncode);
+ *      });
+ *
+ *       it('should handle insufficient sentences for encoding (expected success)', () => {
+ *          const original = "One sentence only.";
+ *          const bitsToEncode = [true, false];
+ *          const { modifiedText, bitsEncoded } = encodeStylometricBits(original, bitsToEncode);
+ *          expect(bitsEncoded).toBe(0);
+ *          expect(modifiedText).toEqual(original);
+ *      });
+ *   });
+ *
+ *   describe('End-to-End', () => {
+ *      it('should hide and extract data successfully (expected success)', () => {
+ *          const original = "This is a longer piece of text. It contains several sentences. Some of them might actually be modified. Others will remain the same. We need enough capacity for the test data. Let's add one more sentence.";
+ *          const data = "Secret!";
+ *          const encoded = hideDataStylometrically(original, data);
+ *          const extracted = extractHiddenStylometricData(encoded);
+ *          expect(extracted).toEqual(data);
+ *      });
+ *
+ *       it('should return null if marker is missing (expected success)', () => {
+ *          const textWithoutMarker = "This text has no marker.";
+ *          const extracted = extractHiddenStylometricData(textWithoutMarker);
+ *          expect(extracted).toBeNull();
+ *      });
+ *   });
+ * });
+ */

@@ -1,0 +1,137 @@
+{
+    "corpus": [
+      {
+        "id": "legal-contract-1",
+        "genre": "legal",
+        "subgenre": "contract clause",
+        "length": "medium",
+        "content": "Section 4.2: Confidentiality Obligations. During the Term and thereafter, Recipient shall not disclose Discloser’s Confidential Information to any third party without prior written consent, except as required by law. Unauthorized disclosure shall entitle Discloser to injunctive relief.",
+        "persona_variants": [
+          {
+            "persona": "lawyer_formal",
+            "tone": "legalese",
+            "complexity": "high",
+            "variant_content": "Pursuant to Section 4.2 herein, the Recipient covenants and agrees to maintain the confidentiality of the Discloser’s Confidential Information in perpetuity, irrespective of termination, and shall refrain from any dissemination absent express written authorization, barring statutory compulsion. Breach hereof shall confer upon Discloser the right to seek equitable remedies, including but not limited to injunctive relief."
+          },
+          {
+            "persona": "lawyer_friendly",
+            "tone": "plain language",
+            "complexity": "medium",
+            "variant_content": "Don’t share the other party’s secrets—ever—unless they say so in writing or the law forces you. If you leak, they can sue to stop you."
+          },
+          {
+            "persona": "lawyer_threatening",
+            "tone": "aggressive",
+            "complexity": "medium",
+            "variant_content": "Break this NDA, and we’ll drag you to court so fast your head spins. No leaks. No excuses. Got it?"
+          }
+        ],
+        "metadata": {
+          "word_count": 35,
+          "sentence_structure": "complex",
+          "keywords": ["confidentiality", "injunctive relief", "disclosure"]
+        }
+      },
+      {
+        "id": "poetry-haiku-1",
+        "genre": "poetry",
+        "subgenre": "haiku",
+        "length": "micro",
+        "content": "Code compiles at dawn / A single error remains / Coffee grows cold.",
+        "persona_variants": [
+          {
+            "persona": "romantic",
+            "tone": "lyrical",
+            "complexity": "low",
+            "variant_content": "Dawn light on the screen / One stubborn line refuses / The tea steeps, untouched."
+          },
+          {
+            "persona": "cynical",
+            "tone": "dark humor",
+            "complexity": "low",
+            "variant_content": "Debugging till dawn / Why the hell won’t this work? / I hate my job."
+          },
+          {
+            "persona": "zen",
+            "tone": "calm",
+            "complexity": "low",
+            "variant_content": "Morning keyboard taps / A bug lingers like mist / Breathe. Try again."
+          }
+        ],
+        "metadata": {
+          "word_count": 12,
+          "sentence_structure": "5-7-5",
+          "keywords": ["dawn", "error", "coffee"]
+        }
+      },
+      {
+        "id": "social-media-rant-1",
+        "genre": "social media",
+        "subgenre": "rant",
+        "length": "short",
+        "content": "Why do ‘smart’ thermostats need a 15-step setup? I just want my house warm, not a PhD in IoT.",
+        "persona_variants": [
+          {
+            "persona": "angry_boomer",
+            "tone": "exasperated",
+            "complexity": "low",
+            "variant_content": "Back in my day, thermostats had ONE BUTTON. Now I need a damn app, a Wi-Fi password, and a firmware update? Nope."
+          },
+          {
+            "persona": "tech_optimist",
+            "tone": "upbeat",
+            "complexity": "medium",
+            "variant_content": "The future is here! Sure, smart thermostats take patience to configure, but once you’re done, voice-controlled comfort is *chef’s kiss*."
+          },
+          {
+            "persona": "conspiracy_theorist",
+            "tone": "paranoid",
+            "complexity": "medium",
+            "variant_content": "They make it complicated ON PURPOSE. Big Tech wants your data—even your thermostat knows when you’re home. Wake up, sheeple!"
+          }
+        ],
+        "metadata": {
+          "word_count": 18,
+          "sentence_structure": "exclamatory",
+          "keywords": ["thermostat", "IoT", "rant"]
+        }
+      },
+      {
+        "id": "academic-abstract-1",
+        "genre": "academic",
+        "subgenre": "abstract",
+        "length": "medium",
+        "content": "This study examines bias in facial recognition algorithms, focusing on racial disparities in error rates. Using a dataset of 100K images, we demonstrate that darker-skinned individuals experience 34% higher false positives than lighter-skinned counterparts under identical conditions.",
+        "persona_variants": [
+          {
+            "persona": "ivory_tower",
+            "tone": "jargon-heavy",
+            "complexity": "high",
+            "variant_content": "Our interdisciplinary inquiry interrogates the racialized epistemologies embedded within computer vision architectures, quantitatively operationalizing bias through a framework of intersectional computational injustice. Findings reveal statistically significant (p < 0.01) disparities in misclassification rates along phenotypical axes."
+          },
+          {
+            "persona": "policy_advocate",
+            "tone": "urgent",
+            "complexity": "medium",
+            "variant_content": "Facial recognition isn’t ‘neutral’—our data proves it’s racist. 34% more false positives for dark-skinned people means wrongful arrests. Regulate this NOW."
+          },
+          {
+            "persona": "layman_summary",
+            "tone": "accessible",
+            "complexity": "low",
+            "variant_content": "We tested face-scanning software and found it’s worse at recognizing darker skin tones. Fixing this could stop unfair treatment by police or hiring tools."
+          }
+        ],
+        "metadata": {
+          "word_count": 41,
+          "sentence_structure": "declarative",
+          "keywords": ["bias", "facial recognition", "racial disparities"]
+        }
+      }
+    ],
+    "metadata": {
+      "total_entries": 4,
+      "genres_covered": ["legal", "poetry", "social media", "academic"],
+      "persona_count": 12
+    }
+  }

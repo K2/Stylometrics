@@ -1,600 +1,487 @@
 // filepath: /home/files/git/Stylometrics/stylometric_fusion.genai.mts
 /**
- * Stylometric Fusion Model for AI-Generated Text Detection
- *
- * Implements the fusion network architecture from Kumarage et al. (2023) using TF.js.
- * Combines stylometric features and LM embeddings for detection.
- *
- * Design Goals: Implement TF.js networks, prediction, and training logic. Improve normalization.
- * Constraints: Requires TF.js, StyleFeatureExtractor, EmbeddingModel. See stylometric_fusion.ApiNotes.md.
- * Paradigm: Imperative (TF.js), Functional (Data transformation).
- *
- * Flow:
- * 1. `StyleFusionModel` constructor: Initializes networks, gets feature/embedding dimensions.
- * 2. `predict`: Extracts features, gets embedding, runs through ReduceNetwork -> ClassificationNetwork -> outputs probability.
- * 3. `trainFusionModel`: Prepares data, compiles models, runs training loop using `fitDataset`.
+ * Module: Stylometric Fusion Model
+ * Role: Combines stylometric features and semantic embeddings for robust authorship/style detection.
+ * Design Goals: Create a TF.js model that fuses different feature types for prediction.
+ * Architectural Constraints: Requires a concrete EmbeddingModel implementation (external dependency). Relies on StyleFeatureExtractor. See ./stylometric_fusion.ApiNotes.md.
+ * Happy-path: Instantiate with feature extractor and embedding model -> train (optional) -> predict -> get style prediction.
  */
+import * as tf from '@tensorflow/tfjs-node'; // Use tfjs-node for backend flexibility
+import assert from 'assert';
+// Assuming StyleFeatureExtractor is correctly implemented elsewhere
+// We need a mockable way to import this for testing
+import { StyleFeatureExtractor as ActualStyleFeatureExtractor } from './stylometric_detection.genai.mts';
 
-import * as tf from '@tensorflow/tfjs';
-// Ensure tfjs backend is initialized
-// import '@tensorflow/tfjs-node'; // or '@tensorflow/tfjs-backend-wasm' etc. depending on environment
+// Define a type for the feature extractor class for easier mocking
+type StyleFeatureExtractorType = typeof ActualStyleFeatureExtractor;
 
-// Assuming StyleFeatureExtractor is in the detection module (adjust path if needed)
-import { StyleFeatureExtractor, type FeatureMap } from './stylometric_detection.genai.mts'; // Use .mts if that's the actual file
+// Use a variable that can be reassigned in tests
+let StyleFeatureExtractor: StyleFeatureExtractorType = ActualStyleFeatureExtractor;
+
+// Allow tests to replace the implementation
+export function __setStyleFeatureExtractor(extractor: StyleFeatureExtractorType) {
+    StyleFeatureExtractor = extractor;
+}
+export function __restoreStyleFeatureExtractor() {
+    StyleFeatureExtractor = ActualStyleFeatureExtractor;
+}
+
+// --- Interfaces ---
+// Reference: ./stylometric_fusion.ApiNotes.md#Interfaces
 
 /**
- * Interface for embedding model that can generate text embeddings
+ * Interface for any model capable of generating text embeddings.
+ * This needs to be implemented externally (e.g., using @tensorflow-models/universal-sentence-encoder,
+ * or calling an API like OpenAI Embeddings, or loading a local HuggingFace model via transformers.js).
  */
 export interface EmbeddingModel {
-    generateEmbedding(text: string): Promise<Float32Array>;
+    /**
+     * Generates an embedding for the given text.
+     * @param text The input text.
+     * @returns A TensorFlow Tensor1D representing the embedding.
+     */
+    embed(text: string): Promise<tf.Tensor1D>;
+
+    /**
+     * Returns the dimensionality of the embeddings produced by this model.
+     */
     getEmbeddingDimension(): number;
-}
-
-/**
- * Reduce Network component
- */
-export class ReduceNetwork {
-    model: tf.Sequential; // Make model public for access in training
-    readonly styloFeatureDim: number;
-    readonly lmEmbedDim: number;
-    readonly outputDim: number;
-
-    constructor(
-        styloFeatureDim: number,
-        lmEmbedDim: number,
-        hiddenDim: number = 128,
-        outputDim: number = 64
-    ) {
-        // assert styloFeatureDim > 0 : 'Stylo feature dimension must be positive';
-        // assert lmEmbedDim > 0 : 'LM embedding dimension must be positive';
-        this.styloFeatureDim = styloFeatureDim;
-        this.lmEmbedDim = lmEmbedDim;
-        this.outputDim = outputDim;
-        this.model = this.buildNetwork(hiddenDim);
-    }
-
-    private buildNetwork(hiddenDim: number): tf.Sequential {
-        const model = tf.sequential({ name: 'ReduceNetwork' });
-        const inputDim = this.styloFeatureDim + this.lmEmbedDim;
-        // assert inputDim > 0 : 'Total input dimension must be positive';
-
-        model.add(tf.layers.dense({
-            units: hiddenDim, activation: 'relu', inputShape: [inputDim]
-        }));
-        model.add(tf.layers.dropout({ rate: 0.3 })); // Increased dropout slightly
-        model.add(tf.layers.dense({ units: this.outputDim, activation: 'relu' })); // Added ReLU based on common patterns
-        return model;
-    }
-
-    predict(styloFeatures: tf.Tensor, lmEmbedding: tf.Tensor): tf.Tensor {
-        // assert styloFeatures.shape[0] === lmEmbedding.shape[0] : 'Batch sizes must match for features and embeddings';
-        // assert styloFeatures.shape[1] === this.styloFeatureDim : 'Feature tensor has incorrect dimension';
-        // assert lmEmbedding.shape[1] === this.lmEmbedDim : 'Embedding tensor has incorrect dimension';
-        const combined = tf.concat([styloFeatures, lmEmbedding], 1);
-        const result = this.model.predict(combined) as tf.Tensor;
-        // combined.dispose(); // Dispose intermediate tensor - handled by tf.tidy in caller
-        // assert result.shape[1] === this.outputDim : 'ReduceNetwork output has incorrect dimension';
-        return result;
-    }
-
-    getModel(): tf.Sequential { return this.model; }
-}
-
-/**
- * Classification Network component
- */
-export class ClassificationNetwork {
-    model: tf.Sequential; // Make model public for access in training
-    readonly inputDim: number;
-
-    constructor(inputDim: number, hiddenDim: number = 32) {
-        // assert inputDim > 0 : 'Input dimension must be positive';
-        this.inputDim = inputDim;
-        this.model = this.buildNetwork(hiddenDim);
-    }
-
-    private buildNetwork(hiddenDim: number): tf.Sequential {
-        const model = tf.sequential({ name: 'ClassificationNetwork' });
-        model.add(tf.layers.dense({
-            units: hiddenDim, activation: 'relu', inputShape: [this.inputDim]
-        }));
-        model.add(tf.layers.dropout({ rate: 0.3 })); // Increased dropout slightly
-        // Output layer: 2 units (Human, AI) with softmax for probabilities
-        model.add(tf.layers.dense({ units: 2, activation: 'softmax' }));
-        return model;
-    }
-
-    predict(x: tf.Tensor): tf.Tensor {
-        // assert x.shape[1] === this.inputDim : 'ClassificationNetwork input has incorrect dimension';
-        const result = this.model.predict(x) as tf.Tensor;
-        // assert result.shape[1] === 2 : 'ClassificationNetwork output should have 2 units';
-        return result;
-    }
-
-    getModel(): tf.Sequential { return this.model; }
-}
-
-/**
- * Interface for normalization parameters (mean and standard deviation)
- */
-interface NormalizationParams {
-    mean: tf.Tensor1D;
-    stdDev: tf.Tensor1D;
-}
-
-/**
- * Complete StyleFusionModel
- */
-export class StyleFusionModel {
-    featureExtractor: StyleFeatureExtractor; // Make public for access in training
-    embeddingModel: EmbeddingModel; // Make public for access in training
-    reduceNetwork: ReduceNetwork;
-    classificationNetwork: ClassificationNetwork;
-    styloFeatureNames: string[] = [];
-    private normalizationParams: NormalizationParams | null = null; // Store normalization params
-
-    constructor(
-        embeddingModel: EmbeddingModel,
-        reduceHiddenDim: number = 128,
-        reduceOutputDim: number = 64,
-        classifyHiddenDim: number = 32
-    ) {
-        this.featureExtractor = new StyleFeatureExtractor();
-        this.embeddingModel = embeddingModel;
-
-        // Determine feature dimension from an example
-        const exampleFeatures = this.featureExtractor.extractAllFeatures("Example text.");
-        this.styloFeatureNames = Object.keys(exampleFeatures).sort(); // Sort for consistent order
-        const styloDim = this.styloFeatureNames.length;
-        const lmEmbedDim = embeddingModel.getEmbeddingDimension();
-        // assert styloDim > 0 : 'Could not determine stylometric feature dimension';
-        // assert lmEmbedDim > 0 : 'Could not determine embedding dimension';
-
-
-        this.reduceNetwork = new ReduceNetwork(styloDim, lmEmbedDim, reduceHiddenDim, reduceOutputDim);
-        this.classificationNetwork = new ClassificationNetwork(reduceOutputDim, classifyHiddenDim);
-    }
 
     /**
-     * Set normalization parameters (mean and standard deviation for each feature).
-     * These should be calculated from the training dataset.
+     * Releases any resources held by the model.
      */
-    setNormalizationParams(params: NormalizationParams): void {
-        // assert params.mean.shape[0] === this.styloFeatureNames.length : 'Normalization mean dimension mismatch';
-        // assert params.stdDev.shape[0] === this.styloFeatureNames.length : 'Normalization stdDev dimension mismatch';
-        // Dispose previous params if they exist
-        this.normalizationParams?.mean.dispose();
-        this.normalizationParams?.stdDev.dispose();
-        this.normalizationParams = {
-             mean: params.mean.clone(), // Clone to avoid external modification
-             stdDev: params.stdDev.clone()
-        };
-    }
-
-    /**
-     * Convert a feature map to a normalized tensor using stored parameters.
-     */
-    featureMapToTensor(features: FeatureMap): tf.Tensor2D {
-        // assert this.styloFeatureNames.length > 0 : 'Feature names not initialized';
-        const featureValues = this.styloFeatureNames.map(name => features[name] || 0);
-        const tensor = tf.tensor1d(featureValues);
-
-        if (this.normalizationParams) {
-            // Apply standardization: (value - mean) / stdDev
-            // Add small epsilon to stdDev to avoid division by zero
-            const normalized = tensor.sub(this.normalizationParams.mean)
-                                   .div(this.normalizationParams.stdDev.add(tf.scalar(1e-6)));
-            tensor.dispose(); // Dispose original tensor
-            // Reshape to 2D tensor (batch size 1)
-            return normalized.reshape([1, this.styloFeatureNames.length]);
-        } else {
-            // Warn if normalization params not set, return unnormalized
-            console.warn("Normalization parameters not set. Returning unnormalized features.");
-            // Reshape to 2D tensor (batch size 1)
-            return tensor.reshape([1, this.styloFeatureNames.length]);
-        }
-    }
-
-
-    /**
-     * Predict whether text is AI-generated
-     */
-    async predict(text: string): Promise<{
-        isAiGenerated: boolean;
-        probability: number; // Probability of being AI-generated (class 1)
-        features: FeatureMap;
-    }> {
-        // assert text && text.length > 0 : 'Input text cannot be empty';
-        if (!text) {
-             throw new Error("Input text cannot be empty for prediction.");
-        }
-
-        // Keep track of tensors created outside tidy for potential manual disposal on error
-        let styloFeaturesTensor: tf.Tensor2D | null = null;
-        let lmEmbeddingTensor: tf.Tensor2D | null = null;
-
-        try {
-            // Use tf.tidy to automatically dispose intermediate tensors like reducedTensor, logitsTensor
-            return await tf.tidy(async () => {
-                const features = this.featureExtractor.extractAllFeatures(text);
-                styloFeaturesTensor = this.featureMapToTensor(features); // Managed outside tidy if normalization fails
-
-                const embedding = await this.embeddingModel.generateEmbedding(text);
-                // assert embedding && embedding.length === this.embeddingModel.getEmbeddingDimension() : 'Invalid embedding received';
-                lmEmbeddingTensor = tf.tensor2d([Array.from(embedding)]); // Managed outside tidy
-
-                // --- Start of added logic ---
-                // assert styloFeaturesTensor.shape[0] === 1 : 'Feature tensor should have batch size 1';
-                // assert lmEmbeddingTensor.shape[0] === 1 : 'Embedding tensor should have batch size 1';
-
-                const reducedTensor = this.reduceNetwork.predict(styloFeaturesTensor, lmEmbeddingTensor);
-                const logitsTensor = this.classificationNetwork.predict(reducedTensor);
-                // --- End of added logic ---
-
-                // Get probabilities [prob_human, prob_ai]
-                const probabilities = await logitsTensor.array() as number[][];
-                // assert probabilities && probabilities.length === 1 && probabilities[0].length === 2 : 'Logits tensor has unexpected shape';
-                const aiProbability = probabilities[0][1];
-                // assert aiProbability >= 0 && aiProbability <= 1 : `Invalid AI probability calculated: ${aiProbability}`;
-
-
-                return {
-                    isAiGenerated: aiProbability >= 0.5,
-                    probability: aiProbability,
-                    features // Return original (unnormalized) features for inspection
-                };
-            });
-        } catch (error) {
-            console.error("Error in fusion model prediction:", error);
-            // Manually dispose tensors created outside tidy if an error occurred before tidy completed
-            // Note: Tensors created *inside* tidy are usually handled, but being explicit can help in complex cases.
-            styloFeaturesTensor?.dispose();
-            lmEmbeddingTensor?.dispose();
-            // reducedTensor and logitsTensor are handled by tf.tidy if created successfully
-            throw error; // Re-throw the error
-        } finally {
-             // Ensure tensors created outside tidy are disposed even if predict returns normally
-             // (featureMapToTensor might return an unnormalized tensor outside tidy)
-             if (styloFeaturesTensor && !styloFeaturesTensor.isDisposed) {
-                 styloFeaturesTensor.dispose();
-             }
-             if (lmEmbeddingTensor && !lmEmbeddingTensor.isDisposed) {
-                 lmEmbeddingTensor.dispose();
-             }
-        }
-    }
-
-    /**
-     * Get the TensorFlow models (useful for training)
-     */
-    getModels(): {
-        reduceNetwork: tf.Sequential;
-        classificationNetwork: tf.Sequential;
-    } {
-        return {
-            reduceNetwork: this.reduceNetwork.getModel(),
-            classificationNetwork: this.classificationNetwork.getModel()
-        };
-    }
-
-     /**
-     * Dispose of the model's tensors (normalization params)
-     */
-    dispose(): void {
-        this.normalizationParams?.mean.dispose();
-        this.normalizationParams?.stdDev.dispose();
-        this.normalizationParams = null;
-        // Note: The models themselves (weights) are managed by TF.js
-        // If models were loaded from files, tf.loadLayersModel returns a tf.LayersModel
-        // which might have a dispose method, but Sequential models created directly
-        // don't typically need manual disposal of the model structure itself.
-        // Weights are tensors managed internally by TF.js layers.
-        console.log("StyleFusionModel disposed normalization parameters.");
-    }
+    dispose(): void;
 }
 
-/**
- * Simple mock embedding model implementation
- */
-export class MockEmbeddingModel implements EmbeddingModel {
+export interface FusionModelConfig {
+    learningRate?: number;
+    epochs?: number;
+    batchSize?: number;
+    validationSplit?: number; // Added for training config
+    earlyStoppingPatience?: number; // Added for training config
+    // Add other relevant hyperparameters
+}
+
+// --- Concrete Implementation Required ---
+// The user MUST provide a class that implements EmbeddingModel.
+// Example structure using a hypothetical library:
+/*
+import { SomeEmbeddingLibrary } from 'some-embedding-library'; // Hypothetical
+
+export class MyEmbeddingModel implements EmbeddingModel {
+    private model: SomeEmbeddingLibrary.Model; // Replace with actual model type
     private dimension: number;
-    constructor(dimension: number = 768) { this.dimension = dimension; }
-    async generateEmbedding(text: string): Promise<Float32Array> {
-        // Simple deterministic embedding based on text length and char codes
-        const embedding = new Float32Array(this.dimension);
-        // Ensure text is not empty to avoid NaN/errors in charCodeAt
-        const safeText = text || " ";
-        const seed = safeText.length + safeText.charCodeAt(0 % safeText.length) + safeText.charCodeAt(Math.min(5, safeText.length - 1) % safeText.length);
-        for (let i = 0; i < this.dimension; i++) {
-            embedding[i] = (Math.sin(seed + i * 0.1) + 1) / 2; // Value between 0 and 1
+    private isDisposed: boolean = false;
+
+    constructor(modelPathOrUrl: string) {
+        // Load the actual model (this is specific to the chosen library)
+        console.log(`[MyEmbeddingModel] Loading embedding model from ${modelPathOrUrl}...`);
+        // this.model = await SomeEmbeddingLibrary.load(modelPathOrUrl); // Example async loading
+        // this.dimension = this.model.getOutputShape()[1]; // Example: Get dimension
+        this.dimension = 512; // Placeholder - SET ACTUAL DIMENSION
+        assert(this.dimension > 0, "[MyEmbeddingModel] Embedding dimension must be positive.");
+        console.log(`[MyEmbeddingModel] Model loaded. Dimension: ${this.dimension}`);
+    }
+
+    async embed(text: string): Promise<tf.Tensor1D> {
+        assert(!this.isDisposed, '[MyEmbeddingModel] Model has been disposed.');
+        assert(text != null, '[MyEmbeddingModel] Input text cannot be null.');
+        // Use the loaded model to generate embeddings
+        // const embeddingsArray = await this.model.embed([text]); // Example API call
+        // const tensor = tf.tidy(() => tf.tensor1d(embeddingsArray[0]));
+        // return tensor;
+
+        // Placeholder implementation - REPLACE WITH ACTUAL EMBEDDING LOGIC
+        console.warn("[MyEmbeddingModel] embed() using placeholder implementation!");
+        return tf.tidy(() => tf.randomNormal([this.dimension]));
+    }
+
+    getEmbeddingDimension(): number {
+        return this.dimension;
+    }
+
+    dispose(): void {
+        if (!this.isDisposed) {
+            console.log("[MyEmbeddingModel] Disposing embedding model...");
+            // Add actual disposal logic if needed (e.g., this.model.dispose())
+            // if (this.model && typeof this.model.dispose === 'function') {
+            //     this.model.dispose();
+            // }
+            this.isDisposed = true;
         }
-        return embedding;
     }
-    getEmbeddingDimension(): number { return this.dimension; }
 }
+*/
 
-/**
- * Train the fusion model on labeled data
- */
-export async function trainFusionModel(
-    model: StyleFusionModel,
-    texts: string[],
-    labels: number[], // 0 for human, 1 for AI
-    options: {
-        epochs?: number,
-        batchSize?: number,
-        learningRate?: number,
-        validationSplit?: number
-    } = {}
-): Promise<tf.History> {
-    const {
-        epochs = 5,
-        batchSize = 16,
-        learningRate = 0.001,
-        validationSplit = 0.2
-    } = options;
-
-    // --- Start of added/completed logic ---
-    // assert texts.length === labels.length : `Number of texts (${texts.length}) and labels (${labels.length}) must match`;
-    // assert texts.length > 0 : 'Training data cannot be empty';
-    // assert validationSplit >= 0 && validationSplit < 1 : `Validation split must be between 0 and 1, got ${validationSplit}`;
-    if (texts.length !== labels.length) {
-        throw new Error(`Number of texts (${texts.length}) and labels (${labels.length}) must match`);
+// --- Fusion Model ---
+// [paradigm:functional] - TF.js operations
+// [paradigm:imperative] - Model training loop
+export class FusionModel {
+    classify(text: string) {
+        throw new Error('Method not implemented.');
     }
-    if (texts.length === 0) {
-        throw new Error('Training data cannot be empty');
+    private featureExtractor: InstanceType<StyleFeatureExtractorType>; // Use instance type
+    private embeddingModel: EmbeddingModel; // Use the interface
+    private config: Required<FusionModelConfig>;
+    private model: tf.Sequential | null = null;
+    private featureDimension: number = 0; // Will be set after first feature extraction
+    private embeddingDimension: number = 0;
+    private isDisposed: boolean = false;
+
+    // Reference: ./stylometric_fusion.ApiNotes.md#Initialization
+    constructor(
+        featureExtractor: InstanceType<StyleFeatureExtractorType>, // Inject the concrete implementation instance
+        embeddingModel: EmbeddingModel, // Inject the concrete implementation instance
+        config: FusionModelConfig = {}
+    ) {
+        assert(featureExtractor != null, '[FusionModel] StyleFeatureExtractor cannot be null.');
+        assert(embeddingModel != null, '[FusionModel] EmbeddingModel cannot be null.');
+
+        this.featureExtractor = featureExtractor;
+        this.embeddingModel = embeddingModel;
+        this.embeddingDimension = this.embeddingModel.getEmbeddingDimension();
+        assert(this.embeddingDimension > 0, '[FusionModel] Embedding dimension must be positive.');
+
+        // Define default config including new training parameters
+        const defaultConfig: Required<FusionModelConfig> = {
+            learningRate: 0.001,
+            epochs: 10,
+            batchSize: 32,
+            validationSplit: 0.2,
+            earlyStoppingPatience: 3,
+        };
+
+        this.config = { ...defaultConfig, ...config };
+
+        console.log(`[FusionModel] Initialized with Embedding Dim: ${this.embeddingDimension}, Config:`, this.config);
     }
-     if (validationSplit < 0 || validationSplit >= 1) {
-        throw new Error(`Validation split must be between 0 and 1, got ${validationSplit}`);
-    }
 
+    // [paradigm:functional]
+    private async preprocessInput(text: string): Promise<tf.Tensor1D | null> {
+        assert(!this.isDisposed, '[FusionModel] Model has been disposed.');
+        // Reference: ./stylometric_fusion.ApiNotes.md#Preprocessing
+        assert(text != null, '[FusionModel.preprocessInput] Input text cannot be null.');
+        let featuresTensor: tf.Tensor1D | null = null;
+        let embeddingTensor: tf.Tensor1D | null = null;
+        try {
+            // Assume featureExtractor.extract returns Tensor1D
+            featuresTensor = await this.featureExtractor.extract(text);
+            embeddingTensor = await this.embeddingModel.embed(text);
 
-    console.log(`Starting training with ${texts.length} examples...`);
-
-    // 1. Pre-extract features and embeddings (and calculate normalization params)
-    console.log("Preprocessing data (extracting features and embeddings)...");
-    const allFeatures: number[][] = [];
-    const allEmbeddings: Float32Array[] = [];
-
-    // Use Promise.all for potentially faster embedding generation if model supports concurrency
-    await Promise.all(texts.map(async (text) => {
-        const features = model.featureExtractor.extractAllFeatures(text);
-        // Ensure consistent feature order using sorted names from the model
-        const featureValues = model.styloFeatureNames.map(name => {
-            const value = features[name];
-            // Handle potential NaN or Infinity values from feature extraction
-            if (value === undefined || value === null || !isFinite(value)) {
-                 console.warn(`Invalid feature value for '${name}' in text: "${text.substring(0, 50)}...". Using 0.`);
-                 return 0;
+            if (!featuresTensor || !embeddingTensor) {
+                throw new Error("Feature or embedding tensor generation failed.");
             }
-            return value;
-        });
-        allFeatures.push(featureValues); // Order might be mixed due to async, need to align later if order matters before tensor creation (it doesn't here as we process text by text)
 
-        // In a real scenario, embeddings might be pre-computed or fetched in batches
-        const embedding = await model.embeddingModel.generateEmbedding(text);
-        allEmbeddings.push(embedding);
-    }));
+            if (!this.featureDimension) {
+                this.featureDimension = featuresTensor.shape[0];
+                assert(this.featureDimension > 0, '[FusionModel] Feature dimension must be positive.');
+                console.log(`[FusionModel] Determined Feature Dimension: ${this.featureDimension}`);
+            } else {
+                assert(featuresTensor.shape[0] === this.featureDimension, `[FusionModel] Feature dimension mismatch. Expected ${this.featureDimension}, got ${featuresTensor.shape[0]}`);
+            }
+            assert(embeddingTensor.shape[0] === this.embeddingDimension, `[FusionModel] Embedding dimension mismatch. Expected ${this.embeddingDimension}, got ${embeddingTensor.shape[0]}`);
 
-    // Ensure features and embeddings align with original texts/labels order if Promise.all reordered
-    // (Re-iterate to build tensors in the correct order)
-    const orderedFeatures: number[][] = [];
-    const orderedEmbeddings: Float32Array[] = [];
-    for (let i = 0; i < texts.length; i++) {
-        const text = texts[i];
-        const features = model.featureExtractor.extractAllFeatures(text);
-        const featureValues = model.styloFeatureNames.map(name => {
-             const value = features[name];
-             return (value === undefined || value === null || !isFinite(value)) ? 0 : value;
-        });
-        orderedFeatures.push(featureValues);
-        // Find the corresponding embedding (assuming generateEmbedding is deterministic or we cached results)
-        // This is inefficient; better to store results indexed by text or index in the Promise.all map.
-        // For simplicity here, we re-generate, assuming the mock is fast and deterministic.
-        orderedEmbeddings.push(await model.embeddingModel.generateEmbedding(text));
-    }
-
-
-    const featuresTensor = tf.tensor2d(orderedFeatures);
-    const embeddingsTensor = tf.tensor2d(orderedEmbeddings.map(e => Array.from(e)));
-    // One-hot encode labels: [1, 0] for human (0), [0, 1] for AI (1)
-    const labelsTensor = tf.tidy(() => tf.oneHot(tf.tensor1d(labels, 'int32'), 2));
-    // assert featuresTensor.shape[0] === texts.length : 'Features tensor batch size mismatch';
-    // assert embeddingsTensor.shape[0] === texts.length : 'Embeddings tensor batch size mismatch';
-    // assert labelsTensor.shape[0] === texts.length : 'Labels tensor batch size mismatch';
-
-
-    // 2. Calculate and set normalization parameters based on training data
-    console.log("Calculating normalization parameters...");
-    let mean: tf.Tensor | null = null;
-    let variance: tf.Tensor | null = null;
-    let stdDev: tf.Tensor | null = null;
-    let normalizedFeaturesTensor: tf.Tensor | null = null;
-    let combinedInputTensor: tf.Tensor | null = null;
-
-    try {
-        ({ mean, variance } = tf.moments(featuresTensor, 0));
-        stdDev = tf.sqrt(variance);
-        // Handle features with zero variance (replace stdDev with epsilon to avoid NaN)
-        const epsilon = 1e-6;
-        const safeStdDev = tf.where(tf.greater(stdDev, epsilon), stdDev, tf.fill(stdDev.shape, epsilon));
-
-        model.setNormalizationParams({ mean: mean as tf.Tensor1D, stdDev: safeStdDev as tf.Tensor1D });
-        console.log("Normalization parameters set.");
-
-        // 3. Normalize features using the calculated parameters
-        normalizedFeaturesTensor = tf.tidy(() =>
-             featuresTensor.sub(mean!).div(safeStdDev) // Use safeStdDev
-        );
-        // assert normalizedFeaturesTensor.shape[0] === texts.length : 'Normalized features tensor batch size mismatch';
-
-
-        // 4. Combine features and embeddings for the ReduceNetwork input
-        combinedInputTensor = tf.concat([normalizedFeaturesTensor, embeddingsTensor], 1);
-        // assert combinedInputTensor.shape[0] === texts.length : 'Combined input tensor batch size mismatch';
-        // assert combinedInputTensor.shape[1] === model.reduceNetwork.styloFeatureDim + model.reduceNetwork.lmEmbedDim : 'Combined input tensor dimension mismatch';
-
-
-        // 5. Define the full model for training (Reduce -> Classify)
-        // We use the existing network instances from the model
-        const fullModel = tf.sequential({ name: 'FullFusionModel' });
-        fullModel.add(model.reduceNetwork.getModel());
-        fullModel.add(model.classificationNetwork.getModel());
-
-        // 6. Compile the full model
-        fullModel.compile({
-            optimizer: tf.train.adam(learningRate),
-            loss: 'categoricalCrossentropy', // Use categoricalCrossentropy for one-hot labels
-            metrics: ['accuracy']
-        });
-        console.log("Model compiled.");
-        fullModel.summary(); // Log model structure
-
-
-        // 7. Train the model
-        console.log(`Training for ${epochs} epochs with batch size ${batchSize}...`);
-        const history = await fullModel.fit(combinedInputTensor, labelsTensor, {
-            epochs: epochs,
-            batchSize: batchSize,
-            validationSplit: validationSplit,
-            shuffle: true, // Shuffle data each epoch
-            callbacks: {
-                onEpochEnd: (epoch, logs) => {
-                    // Log training progress
-                    const logMsg = `Epoch ${epoch + 1}/${epochs} - loss: ${logs?.loss?.toFixed(4) ?? 'N/A'} - acc: ${logs?.acc?.toFixed(4) ?? 'N/A'}` +
-                                   (validationSplit > 0 ? ` - val_loss: ${logs?.val_loss?.toFixed(4) ?? 'N/A'} - val_acc: ${logs?.val_acc?.toFixed(4) ?? 'N/A'}` : '');
-                    console.log(logMsg);
+            // Concatenate features and embeddings within tidy to manage memory
+            const combined = tf.tidy(() => {
+                // Ensure tensors are valid before concat
+                if (!featuresTensor || !embeddingTensor) {
+                    throw new Error("Invalid tensors for concatenation.");
                 }
-                // Consider adding tf.callbacks.earlyStopping() for more robust training
-            }
+                return tf.concat([featuresTensor!, embeddingTensor!]);
+            });
+
+            // Dispose intermediate tensors outside tidy if they were created outside
+            featuresTensor.dispose();
+            embeddingTensor.dispose();
+
+            return combined;
+        } catch (error: any) {
+            console.error("[FusionModel.preprocessInput] Error during preprocessing:", error.message || error);
+            // Ensure disposal even on error
+            if (featuresTensor) featuresTensor.dispose();
+            if (embeddingTensor) embeddingTensor.dispose();
+            return null;
+        }
+    }
+
+    // [paradigm:imperative]
+    private buildModel(inputDim: number): tf.Sequential {
+        assert(!this.isDisposed, '[FusionModel] Model has been disposed.');
+        // Reference: ./stylometric_fusion.ApiNotes.md#ModelArchitecture
+        assert(inputDim > 0, '[FusionModel.buildModel] Input dimension must be positive.');
+        console.log(`[FusionModel] Building model with Input Dimension: ${inputDim}`);
+        const model = tf.sequential();
+        // Simple dense layers for fusion - adjust architecture as needed
+        model.add(tf.layers.dense({ inputShape: [inputDim], units: 64, activation: 'relu', name: 'dense_1' }));
+        model.add(tf.layers.dropout({ rate: 0.3, name: 'dropout_1' }));
+        model.add(tf.layers.dense({ units: 32, activation: 'relu', name: 'dense_2' }));
+        // Output layer - adjust units based on number of classes (e.g., authors, styles)
+        // Assuming binary classification for simplicity
+        model.add(tf.layers.dense({ units: 1, activation: 'sigmoid', name: 'output' }));
+
+        model.compile({
+            optimizer: tf.train.adam(this.config.learningRate),
+            loss: 'binaryCrossentropy',
+            metrics: ['accuracy'],
         });
-        console.log("Training complete.");
+        console.log("[FusionModel] Model built and compiled.");
+        model.summary();
+        return model;
+    }
+
+    // [paradigm:imperative]
+    async train(texts: string[], labels: number[]): Promise<tf.History> {
+        assert(!this.isDisposed, '[FusionModel] Model has been disposed.');
+        // Reference: ./stylometric_fusion.ApiNotes.md#Training
+        assert(texts && texts.length > 0, '[FusionModel.train] Input texts array cannot be null or empty.');
+        assert(labels && labels.length > 0, '[FusionModel.train] Input labels array cannot be null or empty.');
+        assert(labels.length === texts.length, '[FusionModel.train] Labels array must match texts array length.');
+        console.log(`[FusionModel] Starting training with ${texts.length} samples...`);
+
+        // Preprocess all texts and filter out failures
+        const processedData = await Promise.all(texts.map(async (text, i) => {
+            const tensor = await this.preprocessInput(text);
+            if (tensor) {
+                return { tensor, label: labels[i] };
+            } else {
+                console.warn(`[FusionModel.train] Skipping sample at index ${i} due to preprocessing error.`);
+                return null;
+            }
+        }));
+
+        const validData = processedData.filter((item): item is { tensor: tf.Tensor1D; label: number } => item !== null);
+
+        if (validData.length === 0) {
+            throw new Error("[FusionModel.train] No samples could be processed successfully.");
+        }
+
+        // Ensure model is built
+        const inputDim = validData[0].tensor.shape[0];
+        if (!this.model) {
+            this.model = this.buildModel(inputDim);
+        } else {
+            // Verify input dimension matches existing model
+            const currentInputShape = (this.model.layers[0].batchInputShape as number[])[1];
+            assert(currentInputShape === inputDim, `[FusionModel.train] Input dimension mismatch. Model expects ${currentInputShape}, data has ${inputDim}`);
+        }
+
+        // Stack tensors and create labels tensor
+        const xs = tf.stack(validData.map(item => item.tensor));
+        const ys = tf.tensor1d(validData.map(item => item.label), 'int32'); // Assuming integer labels for classification
+
+        console.log(`[FusionModel] Training data shape: xs=${xs.shape}, ys=${ys.shape}`);
+
+        const history = await this.model.fit(xs, ys, {
+            epochs: this.config.epochs,
+            batchSize: this.config.batchSize,
+            validationSplit: this.config.validationSplit,
+            callbacks: tf.callbacks.earlyStopping({ patience: this.config.earlyStoppingPatience }),
+            shuffle: true,
+        });
+
+        console.log("[FusionModel] Training finished.");
+        // Dispose intermediate tensors
+        xs.dispose();
+        ys.dispose();
+        validData.forEach(item => item.tensor.dispose());
 
         return history;
-
-    } finally {
-        // 8. Clean up tensors
-        featuresTensor.dispose();
-        embeddingsTensor.dispose();
-        labelsTensor.dispose();
-        mean?.dispose();
-        variance?.dispose();
-        stdDev?.dispose(); // Dispose original stdDev
-        // safeStdDev is derived from stdDev, should be disposed if stdDev is, or managed by tidy if created inside
-        normalizedFeaturesTensor?.dispose();
-        combinedInputTensor?.dispose();
-        console.log("Training tensors disposed.");
-        // Note: model weights are retained in the model object passed by reference.
-        // The compiled fullModel itself doesn't need explicit disposal here as it uses the layers from the original model.
     }
-    // --- End of added/completed logic ---
+
+    // [paradigm:functional]
+    async predict(text: string): Promise<number | null> {
+        assert(!this.isDisposed, '[FusionModel] Model has been disposed.');
+        // Reference: ./stylometric_fusion.ApiNotes.md#Prediction
+        assert(text != null, '[FusionModel.predict] Input text cannot be null.');
+        if (!this.model) {
+            console.error("[FusionModel.predict] Model not trained or loaded. Cannot predict.");
+            // Optionally load a pre-trained model here if available
+            return null;
+        }
+
+        console.log("[FusionModel] Preprocessing text for prediction...");
+        const inputTensor = await this.preprocessInput(text);
+        if (!inputTensor) {
+            console.error("[FusionModel.predict] Failed to preprocess input text.");
+            return null;
+        }
+
+        const inputBatch = tf.tidy(() => inputTensor.expandDims(0)); // Add batch dimension
+        console.log(`[FusionModel] Predicting with input shape: ${inputBatch.shape}`);
+        const output = this.model.predict(inputBatch) as tf.Tensor;
+        const prediction = await output.data();
+
+        // Dispose tensors
+        inputTensor.dispose();
+        inputBatch.dispose();
+        output.dispose();
+
+        // Assuming binary classification with sigmoid output
+        const result = prediction[0];
+        console.log(`[FusionModel] Prediction output: ${result}`);
+        return result; // Return the raw prediction score (e.g., probability)
+    }
+
+    dispose(): void {
+        console.log("[FusionModel] Disposing fusion model...");
+        if (!this.isDisposed) {
+            if (this.model) {
+                this.model.dispose();
+                this.model = null;
+            }
+            // Dispose feature extractor and embedding model if they own resources
+            if (this.featureExtractor && typeof (this.featureExtractor as any).dispose === 'function') {
+                (this.featureExtractor as any).dispose();
+            }
+            if (this.embeddingModel) {
+                this.embeddingModel.dispose(); // Crucial for the injected model
+            }
+            this.isDisposed = true;
+        }
+    }
 }
 
+// --- Main/Demo Function ---
+async function main() {
+    console.log("--- Fusion Model Demo ---");
 
-/**
- * Demonstrate the fusion model capabilities
- */
-export async function demonstrateFusionModel(
-    humanText: string = "This is a short text written by a human. It has some variation.",
-    aiText: string = "This text segment was meticulously generated by an advanced large language model, exhibiting consistent syntactical structures and lexical patterns often associated with artificial intelligence.",
-    train: boolean = true // Option to include training in the demo
-): Promise<void> {
-    console.log("=== FUSION MODEL DEMO ===");
+    // --- USER ACTION REQUIRED ---
+    // 1. Implement the `EmbeddingModel` interface (e.g., `MyEmbeddingModel` above).
+    // 2. Choose and install the necessary embedding library (e.g., @tensorflow-models/universal-sentence-encoder, @xenova/transformers, or an API client).
+    // 3. Provide the path or configuration needed to load your chosen embedding model.
 
-    let model: StyleFusionModel | null = null;
-    let meanTensor: tf.Tensor | null = null; // Keep track for disposal
-    let stdDevTensor: tf.Tensor | null = null; // Keep track for disposal
+    // Example Instantiation (Requires MyEmbeddingModel implementation and model path)
+    let embeddingModel: EmbeddingModel;
+    try {
+        // embeddingModel = new MyEmbeddingModel('path/to/your/embedding/model'); // Replace with actual path/config
+        // --- TEMPORARY FALLBACK ---
+        console.warn("DEMO: Using placeholder EmbeddingModel. Implement and instantiate a real EmbeddingModel.");
+        embeddingModel = { // Placeholder implementation for demo to run
+            embed: async (text: string) => tf.tidy(() => tf.randomNormal([512]).as1D()),
+            getEmbeddingDimension: () => 512,
+            dispose: () => {}
+        };
+        // --- END TEMPORARY FALLBACK ---
+    } catch (error: any) {
+        console.error("Failed to initialize EmbeddingModel:", error.message || error);
+        console.error("Please ensure you have implemented the EmbeddingModel interface and provided correct model details.");
+        return; // Exit demo if embedding model fails
+    }
+
+    // Assuming StyleFeatureExtractor is available and works
+    const featureExtractor = new StyleFeatureExtractor(/* config if needed */);
+
+    const fusionModel = new FusionModel(featureExtractor, embeddingModel);
+
+    // Example Training Data (Replace with actual data)
+    const trainTexts = ["This is example text one.", "Another piece of text here.", "Style A example.", "Style B text."];
+    const trainLabels = [0, 0, 0, 1]; // Example binary labels
 
     try {
-        const embeddingModel = new MockEmbeddingModel(768); // Use mock for demo
-        model = new StyleFusionModel(embeddingModel);
+        console.log("\n--- Training ---");
+        await fusionModel.train(trainTexts, trainLabels);
+        console.log("Training complete.");
 
-        if (train) {
-            console.log("\n0. TRAINING MODEL (DEMO):");
-            console.log("-------------------------");
-            // Create minimal training data for demo
-            const trainTexts = [
-                humanText,
-                aiText,
-                "Another human example, quite simple really.",
-                "A further AI sample demonstrating verbosity and complex sentence construction.",
-                "Humans write like this sometimes.",
-                "Generated content often follows predictable formats."
-                ];
-            const trainLabels = [0, 1, 0, 1, 0, 1]; // 0=human, 1=AI
-            try {
-                 // Train for a few epochs for demonstration
-                 await trainFusionModel(model, trainTexts, trainLabels, {
-                     epochs: 5, // Increased epochs slightly for demo
-                     batchSize: 2,
-                     learningRate: 0.002,
-                     validationSplit: 0 // No validation split for this tiny dataset
-                    });
-                 console.log("Demo training finished.");
-            } catch (trainError) {
-                 console.error("Error during demo training:", trainError);
-                 console.log("Proceeding with untrained model for prediction (using dummy normalization).");
-                 // Reset normalization if training failed midway or didn't happen
-                 model.dispose(); // Dispose potentially invalid normalization params
-                 // Need to set dummy normalization params if not training or if training failed
-                 const styloDim = model.styloFeatureNames.length;
-                 meanTensor = tf.zeros([styloDim]);
-                 stdDevTensor = tf.ones([styloDim]);
-                 model.setNormalizationParams({
-                     mean: meanTensor as tf.Tensor1D,
-                     stdDev: stdDevTensor as tf.Tensor1D
-                 });
-            }
+        console.log("\n--- Prediction ---");
+        const testText = "A new text to classify for style B.";
+        const prediction = await fusionModel.predict(testText);
 
+        if (prediction !== null) {
+            console.log(`Prediction score for "${testText}": ${prediction.toFixed(4)}`);
+            console.log(`Predicted class: ${prediction > 0.5 ? 1 : 0}`); // Threshold at 0.5 for binary
         } else {
-            console.log("\nSkipping training phase. Using dummy normalization.");
-            // Need to set dummy normalization params if not training
-            const styloDim = model.styloFeatureNames.length;
-            meanTensor = tf.zeros([styloDim]);
-            stdDevTensor = tf.ones([styloDim]);
-            model.setNormalizationParams({
-                mean: meanTensor as tf.Tensor1D,
-                stdDev: stdDevTensor as tf.Tensor1D
-            });
+            console.log("Prediction failed.");
         }
 
-        console.log("\n1. PREDICTING HUMAN TEXT:");
-        console.log("-------------------------");
-        const humanPrediction = await model.predict(humanText);
-        console.log(`Human text prediction: ${humanPrediction.isAiGenerated ? "AI-generated" : "Human"} (probability: ${humanPrediction.probability.toFixed(4)})`);
-        // console.log("Features:", humanPrediction.features); // Optional: Log features
-
-        console.log("\n2. PREDICTING AI TEXT:");
-        console.log("----------------------");
-        const aiPrediction = await model.predict(aiText);
-        console.log(`AI text prediction: ${aiPrediction.isAiGenerated ? "AI-generated" : "Human"} (probability: ${aiPrediction.probability.toFixed(4)})`);
-        // console.log("Features:", aiPrediction.features); // Optional: Log features
-
-        console.log("\n3. PREDICTING EMPTY TEXT (EXPECT ERROR):");
-        console.log("---------------------------------------");
-        try {
-            await model.predict("");
-        } catch (error: any) {
-            console.log(`Caught expected error: ${error.message}`);
-        }
-
-
-    } catch (error) {
-        console.error("Error during fusion model demonstration:", error);
+    } catch (error: any) {
+        console.error("An error occurred during demo:", error.message || error);
     } finally {
-        model?.dispose(); // Dispose model resources (normalization params)
-        // Dispose dummy tensors if they were created
-        meanTensor?.dispose();
-        stdDevTensor?.dispose();
+        // Clean up models
+        fusionModel.dispose();
+        // featureExtractor might need disposal if it holds resources
+        // embeddingModel is disposed via fusionModel.dispose()
         console.log("Demo finished.");
-        // Check for memory leaks (optional, requires tfjs-node usually)
-        // console.log("TF Memory:", tf.memory());
     }
 }
 
-// Example of how to run the demo (e.g., in a main script or test runner)
-/*
- if (require.main === module) {
-     demonstrateFusionModel().catch(console.error);
- }
+// Run the demo if executed directly (optional)
+// main().catch(console.error);
+
+/**
+ * Adds unit tests for the FusionModel.
+ * Suggestion: Use vitest or jest. Add to a master test suite.
+ * Requires mocking StyleFeatureExtractor and providing a mock/stub EmbeddingModel for testing purposes.
+ * Example test structure:
+ * describe('FusionModel', () => {
+ *   let mockFeatureExtractor: StyleFeatureExtractor;
+ *   let mockEmbeddingModel: EmbeddingModel;
+ *   let fusionModel: FusionModel;
+ *
+ *   beforeEach(() => {
+ *     // Mock dependencies
+ *     mockFeatureExtractor = {
+ *       extract: vi.fn().mockResolvedValue(tf.tidy(() => tf.randomNormal([10]))), // 10 features
+ *       // dispose: vi.fn() // if needed
+ *     } as unknown as StyleFeatureExtractor;
+ *
+ *     mockEmbeddingModel = {
+ *       embed: vi.fn().mockResolvedValue(tf.tidy(() => tf.randomNormal([50]))), // 50 embedding dims
+ *       getEmbeddingDimension: vi.fn().mockReturnValue(50),
+ *       dispose: vi.fn()
+ *     };
+ *
+ *     fusionModel = new FusionModel(mockFeatureExtractor, mockEmbeddingModel);
+ *   });
+ *
+ *   afterEach(() => {
+ *      fusionModel.dispose(); // Ensure model resources are cleaned up
+ *      tf.disposeVariables(); // Clean up TF variables
+ *      vi.restoreAllMocks();
+ *   });
+ *
+ *   it('should build the model on first train call (expected success)', async () => {
+ *     const buildSpy = vi.spyOn(fusionModel as any, 'buildModel');
+ *     await fusionModel.train(['text1'], [0]);
+ *     expect(buildSpy).toHaveBeenCalled();
+ *     expect((fusionModel as any).model).not.toBeNull();
+ *     const inputShape = ((fusionModel as any).model.layers[0].inputShape as number[]);
+ *     expect(inputShape[1]).toBe(10 + 50); // features + embeddings
+ *   });
+ *
+ *   it('should preprocess input correctly (expected success)', async () => {
+ *      const text = "sample text";
+ *      const tensor = await (fusionModel as any).preprocessInput(text);
+ *      expect(tensor).toBeInstanceOf(tf.Tensor);
+ *      expect(tensor.shape).toEqual([60]); // 10 features + 50 embedding dims
+ *      expect(mockFeatureExtractor.extract).toHaveBeenCalledWith(text);
+ *      expect(mockEmbeddingModel.embed).toHaveBeenCalledWith(text);
+ *      tensor.dispose();
+ *   });
+ *
+ *   it('should run prediction after training (expected success)', async () => {
+ *      await fusionModel.train(['text1', 'text2'], [0, 1]); // Train first
+ *      const predictSpy = vi.spyOn((fusionModel as any).model, 'predict');
+ *      const result = await fusionModel.predict('new text');
+ *      expect(predictSpy).toHaveBeenCalled();
+ *      expect(typeof result).toBe('number');
+ *   });
+ *
+ *    it('should return null prediction if model not trained (expected success)', async () => {
+ *      const result = await fusionModel.predict('new text');
+ *      expect(result).toBeNull();
+ *   });
+ *
+ *    it('should handle preprocessing errors during training (expected success)', async () => {
+ *       (mockEmbeddingModel.embed as Mock).mockRejectedValueOnce(new Error("Embedding failed"));
+ *       // Training should still complete with the valid sample
+ *       await expect(fusionModel.train(['fail text', 'good text'], [0, 1])).resolves.toBeInstanceOf(tf.History);
+ *       // Ensure model was built with data from 'good text'
+ *       expect((fusionModel as any).model).not.toBeNull();
+ *    });
+ *
+ *    it('should throw error if all training samples fail preprocessing (expected failure)', async () => {
+ *       (mockFeatureExtractor.extract as Mock).mockRejectedValue(new Error("Feature failed"));
+ *       await expect(fusionModel.train(['fail1', 'fail2'], [0, 1])).rejects.toThrow(/No samples could be processed/);
+ *    });
+ * });
  */
