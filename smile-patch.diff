@@ -1,0 +1,57 @@
+*** stylometric_phonetic_encoder_ollama.py
+@@
+ import ollama
++from acoustic_features import AcousticFeatureExtractor
+ import json
+@@ def main():
+     ap = argparse.ArgumentParser()
+     ap.add_argument('--model', required=True)
++    ap.add_argument('--tts-cmd',   help="Shell command template for TTS, use {text} and {out} placeholders")
++    ap.add_argument('--opensmile-path',  default='SMILExtract', help="Path to openSMILE SMILExtract binary")
++    ap.add_argument('--opensmile-config', default='eGeMAPS.conf', help="openSMILE config file")
++    ap.add_argument('--audio-outdir',     default='audio/', help="Where to save intermediate WAVs")
+@@ def main():
+     args = ap.parse_args()
++
++    # instantiate the acoustic feature extractor
++    extractor = AcousticFeatureExtractor(
++        opensmile_path=args.opensmile_path,
++        opensmile_config=args.opensmile_config
++    )
++    os.makedirs(args.audio_outdir, exist_ok=True)
+@@ for var_i, variant in enumerate(variations):
+             for resonance, lab in resonance_pairs:
+                 # Generate pair (harmonic/dissonant)
+                 txt = generate_pair_ollama(variant, model=args.model, resonance=resonance,
+                                           aggression=args.aggression, meta=meta,
+                                           ctx_length=args.ctx_length,
+                                           performance_analysis=performance_analysis,
+                                           log_file=log_file)
++
++                # --- NEW: synthesize and extract acoustic features ---------
++                if args.tts_cmd:
++                    wav_path = os.path.join(
++                        args.audio_outdir,
++                        f"entry{entry_idx}_var{var_i}_{resonance}.wav"
++                    )
++                    # your TTS command must write to {out}
++                    cmd = args.tts_cmd.format(text=txt.replace('"','\\"'), out=wav_path)
++                    os.system(cmd)
++
++                    # extract both openSMILE and Praat features
++                    smile_csv, praat_json = extractor.extract_all(wav_path, args.audio_outdir)
++                    with open(praat_json, 'r') as pf:
++                        praat_feats = json.load(pf)
++
++                    # pick a “tonal amplification” metric, e.g. F0-variation
++                    tonal_amp = praat_feats['sd_f0']
++                    tonal_collapse = 1.0 - tonal_amp / max(praat_feats['mean_f0'], 1e-3)
++
++                    # append to your feature vector (you currently only store [similarity])
++                    feats[-1].append(tonal_amp)
++                    feats[-1].append(tonal_collapse)
++                    log_file.write(f"AUDIO FEATURES: sdF0={tonal_amp:.3f}, collapse={tonal_collapse:.3f}\n")
++                # -------------------------------------------------------------
+ 
+                 # extract phonemes and calculate similarity (unchanged)…
+

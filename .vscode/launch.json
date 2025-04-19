@@ -1,0 +1,16 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": "--model phi4 --n 32  --visible-rows 12 --ctx-length 32768  --tts-cmd 'python ./tts_tool.py --text \"{text}\" --out \"{out}\"'   --audio-outdir warmup_data/wav_files --pretrain-data warmup_data/phonetic_pairs_ollama.json  --scan-csv-features   "
+        }
+    ]
+}
