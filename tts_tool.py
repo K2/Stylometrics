@@ -58,59 +58,39 @@ import tempfile
 import soundfile as sf
 import numpy as np
 from dataset_helpers import extract_opensmile_features
-try:
-    import pyttsx3
-except ImportError:
-    pyttsx3 = None
+import requests
+import json
 
-try:
-    import opensmile
-except ImportError:
-    opensmile = None
+# Orpheus-TTS configuration (local vllm, CUDA device 2)
+ORPHEUS_TTS_URL = os.environ.get("ORPHEUS_TTS_URL", "http://localhost:5005/tts")
+ORPHEUS_TTS_VOICE = "Tara"
+ORPHEUS_TTS_MAX_TOKENS = 1000
 
-# Canonical OpenSMILE config path (see directory-level ApiNotes for config management)
-DEFAULT_OPENSMILE_CONFIG = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "conf", "opensmile", "emo_large.conf")
-)
+# Set CUDA environment for vllm (documented for user)
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+
 def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=None, volume=None):
     """
-    ApiNotes: Synthesizes speech from text and writes to wav_path.
+    ApiNotes: Synthesizes speech from text using Orpheus-TTS (Tara voice, 1000 max tokens, vllm CUDA).
     If wav_path is None, creates a temporary file and returns its path.
-    Uses pyttsx3 for TTS (offline, cross-platform).
-    Optional parameters:
-      - sample_rate: Target sample rate for output WAV file (default 22050 Hz).
-      - voice: Optional voice id or name to use.
-      - rate: Optional speech rate (words per minute).
-      - volume: Optional volume (0.0 to 1.0).
     Returns the path to the generated WAV file.
     """
-    # Reference: file-level ApiNotes, imperative paradigm
-    assert pyttsx3 is not None, "pyttsx3 must be installed for TTS synthesis"
     assert text is not None and isinstance(text, str) and text.strip(), "ApiNotes: text must be a non-empty string"
-    engine = pyttsx3.init()
-    # Set voice if provided
-    if voice is not None:
-        voices = engine.getProperty('voices')
-        matched = False
-        for v in voices:
-            if voice in (v.id, v.name):
-                engine.setProperty('voice', v.id)
-                matched = True
-                break
-        assert matched, f"ApiNotes: requested voice '{voice}' not found in available voices"
-    # Set rate if provided
-    if rate is not None:
-        engine.setProperty('rate', rate)
-    # Set volume if provided
-    if volume is not None:
-        engine.setProperty('volume', volume)
-    # Use a temporary file if wav_path is not provided
+    payload = {
+        "text": text,
+        "voice": voice or ORPHEUS_TTS_VOICE,
+        "max_tokens": ORPHEUS_TTS_MAX_TOKENS,
+        "sample_rate": sample_rate
+    }
+    response = requests.post(ORPHEUS_TTS_URL, json=payload)
+    assert response.status_code == 200, f"Orpheus-TTS API error: {response.status_code} {response.text}"
+    audio_bytes = response.content
     if wav_path is None:
         fd, wav_path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
-    # Synthesize to file
-    engine.save_to_file(text, wav_path)
-    engine.runAndWait()
+    with open(wav_path, "wb") as f:
+        f.write(audio_bytes)
     # Defensive: Ensure file was created
     assert os.path.exists(wav_path), f"ApiNotes: TTS output file not created at {wav_path}"
     # Optionally, resample to target sample_rate if needed
@@ -120,14 +100,11 @@ def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=No
             import librosa
         except ImportError:
             raise ImportError("librosa must be installed for resampling audio")
-        # Defensive: librosa expects float32, ensure correct dtype
         if data.dtype != np.float32:
             data = data.astype(np.float32)
-        # Handle mono/stereo
         if data.ndim == 1:
             data_resampled = librosa.resample(data, orig_sr=sr, target_sr=sample_rate)
         else:
-            # Resample each channel separately
             data_resampled = np.vstack([
                 librosa.resample(data[:, ch], orig_sr=sr, target_sr=sample_rate)
                 for ch in range(data.shape[1])
@@ -157,7 +134,7 @@ def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=No
 # Usage example: Return all features for LLM training
 def example_return_features_for_llm():
     """
-    ApiNotes: Example usage for returning all features to the application for LLM training.
+    ApiNotes: Example usage for returning all features to the application for LLM training (Orpheus-TTS backend).
     """
     text = "The quick brown fox jumps over the lazy dog."
     wav_path = synthesize_audio(text)
@@ -180,7 +157,7 @@ def test_synthesize_and_extract_expected_success():
 
 def test_synthesize_and_extract_expected_failure():
     try:
-        synthesize_audio("Test", wav_path="/invalid/path/to/file.wav")
+        synthesize_audio("")  # Empty text should fail
     except Exception as e:
         print(f"(expected failure) {e}")
     try:

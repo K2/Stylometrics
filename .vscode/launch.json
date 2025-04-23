@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": "--model phi4 --n 32  --visible-rows 12 --ctx-length 32768  --tts-cmd 'python ./tts_tool.py --text \"{text}\" --out \"{out}\"'   --audio-outdir warmup_data/wav_files --pretrain-data warmup_data/phonetic_pairs_ollama.json  --scan-csv-features   "
+            "args": "--model hf.co/ibm-granite/granite-3.3-8b-instruct-GGUF:Q8_0 --n 32  --visible-rows 12 --ctx-length 32768  --tts-cmd 'python ./tts_tool.py --text \"{text}\" --out \"{out}\"'   --audio-outdir warmup_data/wav_files --pretrain-data warmup_data/phonetic_pairs_ollama.json  --scan-csv-features   "
         }
     ]
 }

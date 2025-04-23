@@ -118,18 +118,18 @@ from dataset_helpers import (
     text_to_phonemes, phoneme_vec, cosine, text_syllables, eightword_harmonic_score,
     summarize_acoustic_examples, format_acoustic_examples_for_prompt, load_warmup_data
 )
-# ApiNotes: Remove any local implementation of analyze_past_performance.
-# All calls below use the imported version from dataset_helpers.py.
-# This prevents code duplication and aligns with project-level ApiNotes.
-# ApiNotes: Local implementations of load_dataset and save_dataset have also been removed
-# to prevent parameter name conflicts and align with imported functions.
+from tsfm_adapter import arff_csv_to_timeseries  # glue: import adapter for ARFF/CSV parsing
+
+# default config path for tsfm_adapter
+TSFM_CONFIG_PATH = "conf/opensmile/emo_large.conf"
 
 console = Console()
 def load_pretrain_data_from_csv(
     audio_dir: str,
     label_map: dict,
     feature_keys: list = [],
-    log_file: str = ""
+    log_file: str = "",
+    no_dataframe: bool = False  # option to use manual parsing instead of DataFrame adapter
 ) -> Tuple[List[List[float]], List[int]]:
     """
     ApiNotes: Loads pretrain data from OpenSMILE ARFF/CSV files in audio_dir.
@@ -146,52 +146,70 @@ def load_pretrain_data_from_csv(
         if not fname.endswith(".wav.smile.csv"):
             continue
         csv_path = os.path.join(audio_dir, fname)
-        try:
-            with open(csv_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            # Find the @data line
-            data_start = None
-            header_keys = []
-            for idx, line in enumerate(lines):
-                if line.strip().lower() == "@data":
-                    data_start = idx
-                    break
-                if line.startswith("@attribute"):
-                    # Parse ARFF attribute line: @attribute name type
-                    parts = line.strip().split()
-                    if len(parts) >= 3:
-                        header_keys.append(parts[1])
-            if data_start is None or data_start + 1 >= len(lines):
+        # Determine label for this file
+        label_assigned = None
+        for key, val in label_map.items():
+            if key in fname:
+                label_assigned = val
+                break
+        assert label_assigned is not None, f"Unrecognized label for file: {fname}"
+        # Manual parsing branch
+        if no_dataframe:
+            try:
+                with open(csv_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                # Parse ARFF header and locate @data
+                data_start = None
+                header_keys = []
+                for idx, line in enumerate(lines):
+                    if line.strip().lower() == "@data":
+                        data_start = idx
+                        break
+                    if line.startswith("@attribute"):
+                        parts = line.strip().split()
+                        if len(parts) >= 3:
+                            header_keys.append(parts[1])
+                if data_start is None or data_start + 1 >= len(lines):
+                    skipped += 1
+                    log_message("ERROR", f"[ERROR] No @data section found in {fname}", log_file)
+                    continue
+                # Read first data row
+                data_line = lines[data_start + 1].strip()
+                data_values = [v.strip() for v in data_line.split(',')]
+                use_keys = feature_keys if feature_keys else header_keys
+                key_to_idx = {k: i for i, k in enumerate(header_keys)}
+                # Extract requested features
+                feats = []
+                missing = []
+                for k in use_keys:
+                    idx = key_to_idx.get(k)
+                    if idx is not None and idx < len(data_values):
+                        try:
+                            feats.append(float(data_values[idx]))
+                        except Exception:
+                            feats.append(float('nan'))
+                    else:
+                        missing.append(k)
+                if missing and log_file:
+                    log_message("WARN", f"[WARN] {fname} missing features: {missing}", log_file)
+                features.append(feats)
+                labels.append(label_assigned)
+                processed += 1
+            except Exception as e:
                 skipped += 1
-                log_message("ERROR", f"[ERROR] No @data section found in {fname}", log_file)
-                continue
-            # The data line is the first line after @data
-            data_line = lines[data_start + 1].strip()
-            data_values = [v.strip() for v in data_line.split(",")]
-            # If feature_keys is empty, use all
-            if not feature_keys:
-                feature_keys = header_keys
-            # Map header_keys to indices
-            key_to_idx = {k: i for i, k in enumerate(header_keys)}
-            # Extract only the desired features
-            feats = []
-            missing = []
-            for k in feature_keys:
-                idx = key_to_idx.get(k)
-                if idx is not None and idx < len(data_values):
-                    try:
-                        feats.append(float(data_values[idx]))
-                    except Exception:
-                        feats.append(float('nan'))
-                else:
-                    missing.append(k)
-            if missing and log_file:
-                log_message("WARN", f"[WARN] {fname} missing features: {missing}", log_file)
-            features.append(feats)
-            processed += 1
+                log_message("ERROR", f"[ERROR] Failed manual parse {fname}: {e}", log_file)
+            continue
+        # DataFrame adapter branch
+        try:
+            df = arff_csv_to_timeseries(csv_path, TSFM_CONFIG_PATH)
+            feat_df = df.drop(columns=["time"])
+            for row in feat_df.itertuples(index=False, name=None):
+                features.append(list(row))
+                labels.append(label_assigned)
+            processed += len(feat_df)
         except Exception as e:
             skipped += 1
-            log_message("ERROR", f"[ERROR] Failed to process {fname}: {e}", log_file)
+            log_message("ERROR", f"[ERROR] Failed DataFrame parse {fname}: {e}", log_file)
             continue
 
     msg = f"[INFO] Loaded {processed} pretrain entries from CSV, skipped {skipped}"
@@ -382,14 +400,14 @@ def build_prompt(entry, resonance):
 
 # ApiNotes: ctx_length is set from global configuration for model context window management.
 
-ctx_length = 8192  # Fallback default, update as needed
+ctx_length = 131072  # Fallback default, update as needed
 
 # Global Ollama model reference and context window
 ollama_model_ref = None
-ollama_model_name = "phi4"
-num_ctx = 8192  # Default; will be set at load time
+ollama_model_name = "hf.co/ibm-granite/granite-3.3-8b-instruct-GGUF:Q8_0"
+num_ctx = 131072  # Default; will be set at load time
 
-def load_ollama_model(model=ollama_model_name, num_ctx_val=8192):
+def load_ollama_model(model=ollama_model_name, num_ctx_val=131072):
     """
     ApiNotes: Loads the Ollama model and sets num_ctx for the session.
     This must be called at startup before any LLM calls.
@@ -408,7 +426,7 @@ def call_llm(
     ctx=None,
     system_prompt=None,
     temperature=0.1,
-    max_tokens=32768,
+    max_tokens=131072,
     stream=False,
     log_file=None,
     response_idx=None,
@@ -491,17 +509,20 @@ def call_llm(
                         log_file.write(f"[{tag}] [DONE]\n")
                     break
         else:
-            response: ollama.ChatResponse = ollama.chat(
+            responses: ollama.ChatResponse = ollama.chat(
                 model=model,
                 messages=messages,
                 stream=False,
                 options=options
             )
-            content: str = response['message']['content']
-            if log_file:
-                tag = f"RESPONSE {response_idx}" if response_idx is not None else "RESPONSE"
-                log_file.write(f"[{tag}] {content}\n")
-            return content
+            rv = []
+            for r  in responses:
+                content: str = responses['message']['content']
+                if log_file:
+                    tag = f"RESPONSE {response_idx}" if response_idx is not None else "RESPONSE"
+                    log_file.write(f"[{tag}] {content}\n")
+                rv.append(content)
+            return "\n".join(rv)
     except Exception as e:
         if log_file:
             tag = f"NEXT RESPONSE {response_idx}" if response_idx is not None else "NEXT RESPONSE"
@@ -1152,7 +1173,7 @@ class UIUpdateQueue:
     ApiNotes: Thread-safe queue for UI update callables.
     Used by update_thread to batch and apply UI changes in the TUI.
     """
-    
+
     def __init__(self):
         self._queue = []
         self._lock = threading.Lock()
@@ -1180,7 +1201,7 @@ class UIUpdateQueue:
 
     def should_stop(self):
         return self._stop
-    
+
     def process_updates(self, live):
         """Process all pending updates in the queue"""
         updates_to_process = []
@@ -1295,12 +1316,12 @@ def _parse_opensmile_csv_for_mp(args):
     # Determine label from filename marker
     # label = None
     # for marker, lab in label_map.items():
-    #     if marker in fname:
-    #         label = lab
-    #         break
+#             if marker in fname:
+#                 label = lab
+#                 break
     
-    # if label is None:
-    #     return None  # Skip if no label can be determined
+#     if label is None:
+#         return None  # Skip if no label can be determined
     
     try:
         with open(csv_path, "r", encoding="utf-8") as f:
@@ -1340,7 +1361,7 @@ def _parse_opensmile_csv_for_mp(args):
             else:
                 feature_dict[k] = None
         
-        return (fname, feature_dict, label)
+        return (fname, feature_dict, "")
     
     except Exception:
         return None  # Return None on any parsing error
@@ -1354,7 +1375,7 @@ def scan_csvs_for_phonetic_patterns(
     log_file: str = "",
     max_files: int = 200,
     feature_keys: list = [],
-    num_threads: int = 8
+    num_threads: int = 4
     ):
     """
     ApiNotes: Scans all OpenSMILE CSVs in audio_dir, analyzing features in parallel across multiple threads.
@@ -1377,7 +1398,7 @@ def scan_csvs_for_phonetic_patterns(
     from logging_utils import log_message
     
     # Initialize the LLM model with large context window
-    load_ollama_model("phi4", num_ctx_val=32768)
+    load_ollama_model("hf.co/ibm-granite/granite-3.3-8b-instruct-GGUF:Q8_0", num_ctx_val=131072)
     
     # Gather all CSV files to process
     csv_files = [os.path.join(audio_dir, f) for f in os.listdir(audio_dir) 
@@ -1387,6 +1408,7 @@ def scan_csvs_for_phonetic_patterns(
         csv_files = csv_files[:max_files]
     
     log_message("INFO", f"[START] Processing {len(csv_files)} CSV files using {num_threads} parallel threads", log_file)
+    
     
     # First, determine all available feature keys from the first file
     all_feature_keys = []
@@ -1400,6 +1422,8 @@ def scan_csvs_for_phonetic_patterns(
             
             # Find header keys in the first file
             for line in lines:
+                if line.strip() == "":
+                    continue
                 if line.strip().lower() == "@data":
                     break
                 if line.startswith("@attribute"):
@@ -1435,7 +1459,7 @@ def scan_csvs_for_phonetic_patterns(
         # Collect this feature's values across all files
         feature_values = {}
         skipped_local = 0
-        
+        data_values = []
         for csv_path in csv_files:
             fname = os.path.basename(csv_path)
             try:
@@ -1447,13 +1471,12 @@ def scan_csvs_for_phonetic_patterns(
                 header_keys = []
                 for idx, line in enumerate(lines):
                     if line.strip().lower() == "@data":
-                        data_start = idx + 2  # Changed to +2 as requested
+                        data_start = idx + 2
                         break
                     if line.startswith("@attribute"):
                         parts = line.strip().split()
                         if len(parts) >= 3:
                             header_keys.append(parts[1])
-                
                 if data_start is None or data_start >= len(lines):
                     # Log the issue and continue to next file
                     log_message("WARN", f"[WARN] Invalid CSV format in {fname}, skipping", log_file)
@@ -1469,66 +1492,63 @@ def scan_csvs_for_phonetic_patterns(
                 
                 # Extract just this one value
                 data_line = lines[data_start].strip()
-                data_values = [v.strip() for v in data_line.split(",")]
+                data_values = [v.strip() for v in data_line.split(",")][1:-1]
                 
-                if feature_pos < len(data_values):
-                    try:
-                        feature_values[fname] = float(data_values[feature_pos])
-                    except ValueError:
-                        feature_values[fname] = float('nan')
+                #if feature_pos < len(data_values):
+                #    try:
+                #        feature_values[fname] = float(data_values[feature_pos])
+                #    except ValueError:
+                #        feature_values[fname] = float('nan')
+                #else:
+                #    feature_values[fname] = None
                 
             except Exception as e:
                 skipped_local += 1
         
-        # If no values were collected, return None
-        if not feature_values:
-            log_message("WARN", f"[WARN] No values found for feature {feature_name}", log_file)
-            return feature_name, None, skipped_local
-        
-        # Complete vertical analysis of this feature using LLM
-        prompt = (
-            f"You are given the values of a SINGLE OpenSMILE acoustic feature '{feature_name}' "
-            f"across multiple speech samples. Each sample is identified by filename. "
-            f"You are also given a label map indicating whether each file is harmonic (1) or dissonant (0).\n"
-            f"Analyze the values for '{feature_name}' and reply with:\n"
-            "- The variance of the feature across all files\n"
-            "- The direction of change (does it tend to be higher for harmonic or dissonant?)\n"
-            "- Any additional qualifiers or patterns you observe (e.g., outliers, bimodality, etc)\n"
-            "Respond with a JSON object of the form:\n"
-            "{\n"
-            "  \"variance\": float,\n"
-            "  \"direction\": \"higher for harmonic\" | \"higher for dissonant\" | \"no clear direction\",\n"
-            "  \"qualifiers\": \"...\"\n"
-            "}\n\n"
-            f"Feature Values for '{feature_name}' (JSON):\n{json.dumps(feature_values, indent=2)}\n"
-            f"Label Map (JSON):\n{json.dumps(label_dict, indent=2)}"
-        )
-        
-        # Progress tracking (thread-safe print)
-        print(f"[INFO] Thread analyzing feature {feature_idx+1}/{all_feature_keys_len}: {feature_name}")
-        
-        # Call LLM and get response
-        try:
-            for response in call_llm(prompt, max_tokens=32768, stream=False):
-                # Log the result for this feature immediately (with thread identifier)
-                thread_id = threading.get_native_id()
-                if log_file:
-                    log_message("INFO", f"[Thread-{thread_id}] [LLM_ANALYSIS] {feature_name}: {response}", log_file)
-                
-                # Print the feature result to console for immediate feedback (thread-safe)
-                print(f"[FEATURE {feature_idx+1}] {feature_name}: {response[:100]}...")
-                
-                return feature_name, response, skipped_local
-        except Exception as e:
-            return feature_name, f"ERROR: {e}", skipped_local
-    
+            # If no values were collected, return None
+            #if not feature_values:
+            #    log_message("WARN", f"[WARN] No values found for feature {feature_name}", log_file)
+            #    return feature_name, None, skipped_local
+            
+            # Complete vertical analysis of this feature using LLM
+            prompt = (
+                f"You are given the values of a SINGLE OpenSMILE acoustic feature '{feature_name}' "
+                f"across multiple speech samples. Each sample is identified by filename. "
+                f"You are also given a label map indicating whether each file is harmonic (1) or dissonant (0).\n"
+                f"Analyze the values for '{feature_name}' and reply with:\n"
+                "- The variance of the feature across all files\n"
+                "- The direction of change (does it tend to be higher for harmonic or dissonant?)\n"
+                "- Any additional qualifiers or patterns you observe (e.g., outliers, bimodality, etc)\n"
+                "Respond with a JSON object of the form:\n"
+                "{\n"
+                "  \"variance\": float,\n"
+                "  \"direction\": \"higher for harmonic\" | \"higher for dissonant\" | \"no clear direction\",\n"
+                "  \"qualifiers\": \"...\"\n"
+                "}\n\n"
+                f"Feature Values for '{feature_name}' (JSON):\n{data_values}\n"
+                #f"Label Map (JSON):\n{json.dumps(label_dict, indent=2)}"
+            )
+            
+            # Progress tracking (thread-safe print)
+            print(f"[INFO] Thread analyzing feature {feature_idx+1}/{all_feature_keys_len}: {feature_name}")
+            
+            # Call LLM and collect full response
+            try:
+                parts = list(call_llm(prompt, max_tokens=131072, stream=False))
+                response = "".join(parts)
+                log_message("INFO", f"[LLM] {feature_name}: {response}", log_file)
+                return [(feature_name, response, skipped_local)]
+            except Exception as e:
+                log_message("ERROR", f"LLM failed for {feature_name}: {e}", log_file)
+                return [(feature_name, f"ERROR: {e}", skipped_local)]
+            
     # Process features in parallel using ThreadPoolExecutor
     processed = 0
     skipped = 0
-    feature_results = {}
+    feature_results = []
     
     print(f"[INFO] Starting parallel analysis with {num_threads} threads for {len(all_feature_keys)} features")
-    
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
         # Submit all feature processing tasks to the executor
         future_to_feature = {
@@ -1545,15 +1565,13 @@ def scan_csvs_for_phonetic_patterns(
         for future in concurrent.futures.as_completed(future_to_feature):
             feature_name = future_to_feature[future]
             try:
-                name, result, skipped_count = future.result()
-                if result is not None:
-                    feature_results[name] = result
+                if future is not None:
+                    results = future.result()
+                    feature_results.append(results)
                     processed += 1
-                skipped += skipped_count
             except Exception as e:
-                log_message("ERROR", f"[ERROR] Thread processing failed for feature {feature_name}: {e}", log_file)
                 skipped += 1
-    
+
     # Create a summary dictionary with all the results and statistics
     summary = {
         "total_processed": processed,
@@ -1561,17 +1579,13 @@ def scan_csvs_for_phonetic_patterns(
         "feature_keys": all_feature_keys,
         "results": feature_results
     }
-    
     print(f"[INFO] Parallel feature scan complete. Processed {processed} features across {len(csv_files)} files.")
     if log_file:
         log_message("INFO", f"[SUMMARY] Parallel feature scan complete. Processed: {processed} features using {num_threads} threads", log_file)
-    
     # Print accessible summary information
     print(f"Analyzed {len(feature_results)} features in parallel")
     print(f"Processed a total of {len(csv_files)} CSV files")
-    
     return summary
-
 
 def main():
     # Set random seeds for reproducibility but still random behavior
@@ -1637,13 +1651,16 @@ def main():
             label_map=label_map,
             log_file=args.log_file,
             max_files=200,
-            feature_keys=[]
+            feature_keys=[],
+            num_threads=args.n
         )
         return
     
     future_keys = defaultdict(dict)
     future_results = defaultdict(dict)
     results = defaultdict()
+    feature_results = []
+    processed = 0
 
     if args.llm_bootstrap:
         run_llm_feature_bootstrap(
@@ -1720,23 +1737,23 @@ def main():
             generate_high_quality_pretrain(
                 opensmile_path=args.opensmile_path, 
                 opensmile_config=args.opensmile_config,
-                output_path=args.pretrain_data or "./generated_pretrain_data.json",
+                output_path=args.pretrain_data,
                 log_file=log_file,
                 tts_cmd=args.tts_cmd,
                 audio_outdir=args.audio_outdir
             )
-            pretrain_features, pretrain_labels = load_pretrain_data(args.pretrain_data, args.eightword_mode, log_file)
+    pretrain_features, pretrain_labels = load_pretrain_data(args.pretrain_data, args.eightword_mode, log_file)
     
     log.append(f'Pretrain samples: [cyan]{len(pretrain_labels)}[/]')
     X_persist.extend(pretrain_features)
     y_persist.extend(pretrain_labels)
     log.append(f'Combined dataset: [green]{len(y_persist)}[/] samples')
     log_file.write(f"Added {len(pretrain_labels)} pretrain samples\n")
-    
+
     # ------------------------------------------------------------------
     # Analyze past performance to inform prompting
     # ------------------------------------------------------------------
-    performance_analysis = analyze_past_performance(args.data_file, log_file)
+    performance_analysis = analyze_pformance_analysis = analyze_past_performance(args.data_file, log_file)
     if performance_analysis.get("available", False):
         log.append(f"[blue]Analyzing[/] past performance ({performance_analysis['samples']} samples)")
         if "recommendations" in performance_analysis:
@@ -1944,9 +1961,6 @@ def main():
                             ew_t = eightword_harmonic_score(txt)
                             ew_sim = 1.0 - abs(ew_v - ew_t)
                             final_sim = (sim_cos + ew_sim) / 2.0
-                            log_file.write(f"SIMILARITY: Cosine={sim_cos:.3f}, 8Word={ew_sim:.3f}, Combined={final_sim:.3f}\n")
-                        else:
-                            log_file.write(f"SIMILARITY: Cosine={sim_cos:.3f}\n")
 
                         # --- Logging for threshold rejection ---
                         # Example: If you have a minimum similarity threshold for acceptance
