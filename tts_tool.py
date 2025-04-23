@@ -62,7 +62,7 @@ import requests
 import json
 
 # Orpheus-TTS configuration (local vllm, CUDA device 2)
-ORPHEUS_TTS_URL = os.environ.get("ORPHEUS_TTS_URL", "http://localhost:5005/tts")
+ORPHEUS_TTS_URL = os.environ.get("ORPHEUS_TTS_URL", "http://localhost:8181/tts")
 ORPHEUS_TTS_VOICE = "Tara"
 ORPHEUS_TTS_MAX_TOKENS = 1000
 
