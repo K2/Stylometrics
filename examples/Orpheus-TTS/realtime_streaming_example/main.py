@@ -123,7 +123,7 @@ def create_app():
         model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
         dtype=torch.float16,
         gpu_memory_utilization=1.0,
-        max_model_len=65535,
+        max_model_len=32768,
         max_num_seqs=2  # <-- Reduce to 2 concurrent sequences (example)
     )
 
