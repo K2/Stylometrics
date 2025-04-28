@@ -108,11 +108,13 @@ def create_app(engine):
             syn_tokens = engine.generate_speech(
                 prompt=prompt,
                 voice=voice,
-                repetition_penalty=1.1,
+                #repetition_penalty=1.0,
                 stop_token_ids=[128258],
                 max_tokens=max_tokens,
-                temperature=0.4,
-                top_p=0.9
+                temperature=0.1,
+                top_p=0.9,
+                top_k=40,
+                sample_rate=sample_rate
             )
             for chunk in syn_tokens:
                 yield chunk

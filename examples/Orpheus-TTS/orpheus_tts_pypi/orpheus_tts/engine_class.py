@@ -95,7 +95,7 @@ class OrpheusModel:
  
 
 
-    def generate_tokens_sync(self, prompt, voice=None, request_id="req-001", temperature=0.6, top_p=0.8, max_tokens=1200, stop_token_ids = [49158], repetition_penalty=1.3):
+    def generate_tokens_sync(self, prompt, voice="tara", request_id="req-001", temperature=0.1, top_p=0.8, max_tokens=1200, stop_token_ids = [49158], repetition_penalty=1.0):
         prompt_string = self._format_prompt(prompt, voice)
         print(prompt)
         sampling_params = SamplingParams(
@@ -103,8 +103,11 @@ class OrpheusModel:
         top_p=top_p,
         max_tokens=max_tokens,  # Adjust max_tokens as needed.
         stop_token_ids = stop_token_ids, 
-        repetition_penalty=repetition_penalty, 
+        repetition_penalty=repetition_penalty,
         )
+        
+
+        print(f"Sampling parameters: {sampling_params}")
 
         token_queue = queue.Queue()
 
