@@ -48,11 +48,14 @@ ASCII Diagram:
     +-------------------+
 """
 
+import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # Set before any CUDA/torch/model import
+
 from multiprocessing import freeze_support
 import struct
 from flask import Flask, Response, request
+import torch  # Added for dtype specification
 
-# Import OrpheusModel for TTS inference (see ApiNotes.md for model location/usage)
 from orpheus_tts import OrpheusModel  # Adjust import path if model is local or in another module
 
 # Reference: file-level ApiNotes.md, imperative paradigm
@@ -80,12 +83,11 @@ def create_wav_header(sample_rate=24000, bits_per_sample=16, channels=1):
     return header
 
 #@app.route('/tts', methods=['GET', 'POST'])
-def tts():
+def tts(engine):
     """
     ApiNotes: Handles both GET and POST requests for TTS synthesis. POST expects JSON with 'text', 'voice', 'max_tokens', 'sample_rate'.
     GET uses 'prompt' query param for quick testing. Returns WAV audio stream.
     """
-    # Reference: file-level ApiNotes.md, imperative paradigm
     if request.method == 'POST':
         # Parse JSON payload
         data = request.get_json(force=True)
@@ -102,21 +104,33 @@ def tts():
         max_tokens = 2000
         sample_rate = 24000
 
+    # Generate audio using OrpheusModel
+    audio = engine.generate(prompt, voice=voice, max_tokens=max_tokens, sample_rate=sample_rate)
+    # Assumption: engine.generate returns raw PCM bytes or numpy array; adjust as needed
+
+    # Prepare WAV header + audio
+    wav_header = create_wav_header(sample_rate=sample_rate)
+    def generate_wav():
+        yield wav_header
+        yield audio  # If audio is a generator, use: yield from audio
+
+    return Response(generate_wav(), mimetype="audio/wav")
+
 def create_app():
     app = Flask(__name__)
-    engine = OrpheusModel(model_name="canopylabs/orpheus-tts-0.1-finetune-prod")
+    engine = OrpheusModel(
+        model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
+        dtype=torch.float16  # Explicitly set dtype for M60 compatibility; see file-level ApiNotes.md
+    )
 
-    def create_wav_header(sample_rate=24000, bits_per_sample=16, channels=1):
-        create_wav_header(24000, 16,1)
+    @app.route('/tts', methods=['GET', 'POST'])
+    def tts_route():
+        return tts(engine)
 
     return app
 
-    @app.route('/tts', methods=['GET', 'POST'])
-    def ttsx():
-        tts()
-
 if __name__ == "__main__":
+    freeze_support()
     app = create_app()
     app.run(host='0.0.0.0', port=8181, threaded=True)
-    freeze_support()
 
