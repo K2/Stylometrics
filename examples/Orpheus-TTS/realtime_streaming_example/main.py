@@ -95,13 +95,14 @@ def tts(engine):
         prompt = data.get('text')
         assert prompt and isinstance(prompt, str) and prompt.strip(), 'POST /tts: "text" must be a non-empty string'
         voice = data.get('voice', 'tara')
-        max_tokens = data.get('max_tokens', 2000)
+        max_tokens = data.get('max_tokens', 1500)
         sample_rate = data.get('sample_rate', 24000)
+        gpu_memory_utilization  = data.get('gpu_memory_utilization', 1.0)
     else:
         # GET fallback for browser/debug use
         prompt = request.args.get('prompt', 'Hey there, looks like you forgot to provide a prompt!')
         voice = 'tara'
-        max_tokens = 2000
+        max_tokens = 1500
         sample_rate = 24000
 
     # Generate audio using OrpheusModel
@@ -120,7 +121,8 @@ def create_app():
     app = Flask(__name__)
     engine = OrpheusModel(
         model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
-        dtype=torch.float16  # Explicitly set dtype for M60 compatibility; see file-level ApiNotes.md
+        dtype=torch.float16,
+        gpu_memory_utilization=1.0  # if supported by OrpheusModel
     )
 
     @app.route('/tts', methods=['GET', 'POST'])
