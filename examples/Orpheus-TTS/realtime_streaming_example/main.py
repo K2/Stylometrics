@@ -125,12 +125,12 @@ def create_app():
         gpu_memory_utilization=1.0,
         max_model_len=32768,
         enable_prefix_caching=False,
-        max_seq_len=32768,
+        max_num_batched_tokens=1500,
         max_batch_size=1,  # <-- Reduce to 1 for real-time streaming
         max_batch_size_per_gpu=1,  # <-- Reduce to 1 for real-time streaming
         max_num_seqs_per_gpu=1,  # <-- Reduce to 1 for real-time streaming
-        max_num_seqs=1  # <-- Reduce to 1 for real-time streaming
-
+        max_num_seqs=1,  # <-- Reduce to 1 for real-time streaming
+        
     )
 
     @app.route('/tts', methods=['GET', 'POST'])
