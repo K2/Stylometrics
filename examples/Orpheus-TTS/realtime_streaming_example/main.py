@@ -122,7 +122,8 @@ def create_app():
     engine = OrpheusModel(
         model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
         dtype=torch.float16,
-        gpu_memory_utilization=1.0  # if supported by OrpheusModel
+        gpu_memory_utilization=1.0,  # if supported by OrpheusModel
+        max_model_len=65535  # <-- Set to a value that fits your GPU memory (example: 4096)
     )
 
     @app.route('/tts', methods=['GET', 'POST'])
