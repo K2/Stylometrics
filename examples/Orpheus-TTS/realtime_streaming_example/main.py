@@ -48,8 +48,12 @@ ASCII Diagram:
     +-------------------+
 """
 
+from multiprocessing import freeze_support
 import struct
 from flask import Flask, Response, request
+
+# Import OrpheusModel for TTS inference (see ApiNotes.md for model location/usage)
+from orpheus_tts import OrpheusModel  # Adjust import path if model is local or in another module
 
 # Reference: file-level ApiNotes.md, imperative paradigm
 
@@ -75,9 +79,6 @@ def create_wav_header(sample_rate=24000, bits_per_sample=16, channels=1):
     )
     return header
 
-<<<<<<< Updated upstream
-# All multiprocessing/vllm/OrpheusModel code must be inside main block
-=======
 #@app.route('/tts', methods=['GET', 'POST'])
 def tts():
     """
@@ -100,62 +101,6 @@ def tts():
         voice = 'tara'
         max_tokens = 2000
         sample_rate = 24000
->>>>>>> Stashed changes
-
-def create_app(engine):
-    app = Flask(__name__)
-
-    @app.route('/tts', methods=['GET', 'POST'])
-    def tts():
-        """
-        ApiNotes: Handles both GET and POST requests for TTS synthesis. POST expects JSON with 'text', 'voice', 'max_tokens', 'sample_rate'.
-        GET uses 'prompt' query param for quick testing. Returns WAV audio stream.
-        """
-        # Reference: file-level ApiNotes.md, imperative paradigm
-        if request.method == 'POST':
-            # Parse JSON payload
-            data = request.get_json(force=True)
-            assert data is not None, 'POST /tts requires a JSON body'
-            prompt = data.get('text')
-            assert prompt and isinstance(prompt, str) and prompt.strip(), 'POST /tts: "text" must be a non-empty string'
-            voice = data.get('voice', 'tara')
-            max_tokens = data.get('max_tokens', 2000)
-            sample_rate = data.get('sample_rate', 24000)
-        else:
-            # GET fallback for browser/debug use
-            prompt = request.args.get('prompt', 'Hey there, looks like you forgot to provide a prompt!')
-            voice = 'tara'
-            max_tokens = 2000
-            sample_rate = 24000
-
-<<<<<<< Updated upstream
-        def generate_audio_stream():
-            yield create_wav_header(sample_rate=sample_rate)
-            syn_tokens = engine.generate_speech(
-                prompt=prompt,
-                voice=voice,
-                #repetition_penalty=1.0,
-                stop_token_ids=[128258],
-                max_tokens=max_tokens,
-                temperature=0.1,
-                top_p=0.9,
-                top_k=40,
-                sample_rate=sample_rate
-            )
-            for chunk in syn_tokens:
-                yield chunk
-
-        return Response(generate_audio_stream(), mimetype='audio/wav')
-
-    return app
-
-if __name__ == "__main__":
-    # All multiprocessing/vllm/OrpheusModel code must be inside this block (see ApiNotes)
-    from orpheus_tts import OrpheusModel
-    engine = OrpheusModel(model_name="canopylabs/orpheus-tts-0.1-finetune-prod")
-    app = create_app(engine)
-    app.run(host='0.0.0.0', port=8080, threaded=True)
-=======
 
 def create_app():
     app = Flask(__name__)
@@ -173,6 +118,5 @@ def create_app():
 if __name__ == "__main__":
     app = create_app()
     app.run(host='0.0.0.0', port=8181, threaded=True)
-    freeze_supoprt()
+    freeze_support()
 
->>>>>>> Stashed changes
