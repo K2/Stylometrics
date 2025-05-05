@@ -67,7 +67,6 @@ import numpy as np
 from dataset_helpers import extract_opensmile_features
 from gguf_orpheus import generate_speech_from_api, AVAILABLE_VOICES
 
-<<<<<<< Updated upstream
 # Orpheus-TTS configuration (local vllm, CUDA device 2)
 ORPHEUS_TTS_URL = os.environ.get("ORPHEUS_TTS_URL", "http://localhost:8181/tts")
 ORPHEUS_TTS_VOICE = "Tara"
@@ -76,8 +75,6 @@ ORPHEUS_TTS_MAX_TOKENS = 8192
 # Set CUDA environment for vllm (documented for user)
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-=======
->>>>>>> Stashed changes
 
 def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=None, volume=):
     """
