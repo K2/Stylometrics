@@ -80,7 +80,8 @@ def synthesize_all_phonemes(overwrite=OVERWRITE):
                     # For Orpheus-TTS, assume <modifier>text</modifier> is supported
                     prompt = f"<{modifier}>{phoneme}</{modifier}>"
                     try:
-                        synthesize_audio(prompt, wav_path=out_path, sample_rate=SAMPLE_RATE, voice=voice)
+                        # Set temperature=0.1 for deterministic synthesis (see nearest ApiNotes.md)
+                        synthesize_audio(prompt, wav_path=out_path, sample_rate=SAMPLE_RATE, voice=voice, max )
                         assert os.path.exists(out_path), f"WAV not created: {out_path}"
                         total += 1
                     except Exception as e:

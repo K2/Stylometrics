@@ -64,13 +64,13 @@ import json
 # Orpheus-TTS configuration (local vllm, CUDA device 2)
 ORPHEUS_TTS_URL = os.environ.get("ORPHEUS_TTS_URL", "http://localhost:8181/tts")
 ORPHEUS_TTS_VOICE = "Tara"
-ORPHEUS_TTS_MAX_TOKENS = 1000
+ORPHEUS_TTS_MAX_TOKENS = 8192
 
 # Set CUDA environment for vllm (documented for user)
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
-def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=None, volume=None):
+def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=None, volume=):
     """
     ApiNotes: Synthesizes speech from text using Orpheus-TTS (Tara voice, 1000 max tokens, vllm CUDA).
     If wav_path is None, creates a temporary file and returns its path.

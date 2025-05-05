@@ -121,9 +121,9 @@ def create_app():
     app = Flask(__name__)
     engine = OrpheusModel(
         model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
-        dtype=torch.float16,
+        #dtype=torch.float16,
         gpu_memory_utilization=1.0,
-        max_model_len=32768,
+        max_model_len=165535,
         enable_prefix_caching=False,
         max_num_batched_tokens=1500,
         max_batch_size=1,  # <-- Reduce to 1 for real-time streaming
