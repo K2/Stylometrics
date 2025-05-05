@@ -123,11 +123,8 @@ def create_app():
         model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
         #dtype=torch.float16,
         gpu_memory_utilization=1.0,
-<<<<<<< Updated upstream
-        max_model_len=165535,
-=======
         max_model_len=512,
->>>>>>> Stashed changes
+        max_model_len=512,
         enable_prefix_caching=False,
         max_num_batched_tokens=54,
         max_num_seqs=1,  # <-- Reduce to 1 for real-time streaming

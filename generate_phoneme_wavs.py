@@ -184,17 +184,12 @@ def synthesize_all_phonemes(overwrite=OVERWRITE):
                     repeated = ','.join([phoneme] * 10)
                     prompt = f"<{modifier}>{repeated}"  # No closing moniker
                     try:
-<<<<<<< Updated upstream
-                        # Set temperature=0.1 for deterministic synthesis (see nearest ApiNotes.md)
-                        synthesize_audio(prompt, wav_path=out_path, sample_rate=SAMPLE_RATE, voice=voice, max )
-=======
                         synthesize_with_fallback(
                             prompt,
                             wav_path=out_path,
                             sample_rate=SAMPLE_RATE,
                             voice=voice
                         )
->>>>>>> Stashed changes
                         assert os.path.exists(out_path), f"WAV not created: {out_path}"
                         total += 1
                     except Exception as e:

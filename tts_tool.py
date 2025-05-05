@@ -1,13 +1,16 @@
 """
 
+
 ApiNotes.md (File-level) – tts_tool.py
 
 Role:
+    Provides a programmatic interface for text-to-speech (TTS) synthesis (now via gguf_orpheus.py) and OpenSMILE feature extraction,
     Provides a programmatic interface for text-to-speech (TTS) synthesis (now via gguf_orpheus.py) and OpenSMILE feature extraction,
     decoupled from command-line execution. Enables other modules to synthesize audio and extract features
     without invoking subprocesses or shell commands.
 
 Design Goals:
+    - Enable direct, script-free TTS synthesis (now via Orpheus GGUF backend) and OpenSMILE feature extraction from Python.
     - Enable direct, script-free TTS synthesis (now via Orpheus GGUF backend) and OpenSMILE feature extraction from Python.
     - Centralize TTS and OpenSMILE configuration, referencing canonical config files for reproducibility.
     - Support future expansion to multiple TTS engines or OpenSMILE configs.
@@ -23,6 +26,7 @@ Architectural Constraints:
     - File size monitored; suggest splitting if exceeding 1/3 context window.
 
 Happy-Path:
+    1. Call synthesize_audio(text, wav_path) to synthesize speech to a WAV file (now via gguf_orpheus.py).
     1. Call synthesize_audio(text, wav_path) to synthesize speech to a WAV file (now via gguf_orpheus.py).
     2. Call extract_opensmile_features(wav_path, config_path) to extract features.
     3. Use default OpenSMILE config at conf/opensmile/emo_large.conf unless overridden.
@@ -55,6 +59,7 @@ ASCII Diagram:
 """
 
 
+
 import os
 import tempfile
 import soundfile as sf
@@ -77,6 +82,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=None, volume=):
     """
     ApiNotes: Synthesizes speech from text using Orpheus GGUF backend via gguf_orpheus.py.
+    ApiNotes: Synthesizes speech from text using Orpheus GGUF backend via gguf_orpheus.py.
     If wav_path is None, creates a temporary file and returns its path.
     Returns the path to the generated WAV file.
     """
@@ -84,9 +90,18 @@ def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=No
     # Use default voice if not specified
     use_voice = voice or AVAILABLE_VOICES[0]
     # If wav_path is None, create a temp file
+    # Use default voice if not specified
+    use_voice = voice or AVAILABLE_VOICES[0]
+    # If wav_path is None, create a temp file
     if wav_path is None:
         fd, wav_path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
+    # Call Orpheus GGUF API via gguf_orpheus
+    generate_speech_from_api(
+        prompt=text,
+        voice=use_voice,
+        output_file=wav_path
+    )
     # Call Orpheus GGUF API via gguf_orpheus
     generate_speech_from_api(
         prompt=text,
@@ -117,8 +132,12 @@ def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=No
 
 
 
+
+
+
 def example_return_features_for_llm():
     """
+    ApiNotes: Example usage for returning all features to the application for LLM training (Orpheus GGUF backend).
     ApiNotes: Example usage for returning all features to the application for LLM training (Orpheus GGUF backend).
     """
     text = "The quick brown fox jumps over the lazy dog."
@@ -132,6 +151,7 @@ def example_return_features_for_llm():
 
 # Acceptance test (expected success/failure)
 
+
 def test_synthesize_and_extract_expected_success():
     text = "The quick brown fox jumps over the lazy dog."
     wav_path = synthesize_audio(text)
@@ -140,6 +160,7 @@ def test_synthesize_and_extract_expected_success():
     assert isinstance(features, dict) and len(features) > 0, "Features dict should not be empty"
     print("TTS and OpenSMILE extraction succeeded:", features)
     os.remove(wav_path)
+
 
 
 def test_synthesize_and_extract_expected_failure():
