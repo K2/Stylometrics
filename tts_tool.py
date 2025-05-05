@@ -1,13 +1,14 @@
 """
+
 ApiNotes.md (File-level) – tts_tool.py
 
 Role:
-    Provides a programmatic interface for text-to-speech (TTS) synthesis and OpenSMILE feature extraction,
+    Provides a programmatic interface for text-to-speech (TTS) synthesis (now via gguf_orpheus.py) and OpenSMILE feature extraction,
     decoupled from command-line execution. Enables other modules to synthesize audio and extract features
     without invoking subprocesses or shell commands.
 
 Design Goals:
-    - Enable direct, script-free TTS synthesis and OpenSMILE feature extraction from Python.
+    - Enable direct, script-free TTS synthesis (now via Orpheus GGUF backend) and OpenSMILE feature extraction from Python.
     - Centralize TTS and OpenSMILE configuration, referencing canonical config files for reproducibility.
     - Support future expansion to multiple TTS engines or OpenSMILE configs.
     - Facilitate integration with stylometric analysis and LLM feedback loops.
@@ -22,7 +23,7 @@ Architectural Constraints:
     - File size monitored; suggest splitting if exceeding 1/3 context window.
 
 Happy-Path:
-    1. Call synthesize_audio(text, wav_path) to synthesize speech to a WAV file.
+    1. Call synthesize_audio(text, wav_path) to synthesize speech to a WAV file (now via gguf_orpheus.py).
     2. Call extract_opensmile_features(wav_path, config_path) to extract features.
     3. Use default OpenSMILE config at conf/opensmile/emo_large.conf unless overridden.
     4. Return all features as a dict to the application for further LLM processing.
@@ -53,14 +54,15 @@ ASCII Diagram:
     +-------------------+
 """
 
+
 import os
 import tempfile
 import soundfile as sf
 import numpy as np
 from dataset_helpers import extract_opensmile_features
-import requests
-import json
+from gguf_orpheus import generate_speech_from_api, AVAILABLE_VOICES
 
+<<<<<<< Updated upstream
 # Orpheus-TTS configuration (local vllm, CUDA device 2)
 ORPHEUS_TTS_URL = os.environ.get("ORPHEUS_TTS_URL", "http://localhost:8181/tts")
 ORPHEUS_TTS_VOICE = "Tara"
@@ -69,28 +71,28 @@ ORPHEUS_TTS_MAX_TOKENS = 8192
 # Set CUDA environment for vllm (documented for user)
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+=======
+>>>>>>> Stashed changes
 
 def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=None, volume=):
     """
-    ApiNotes: Synthesizes speech from text using Orpheus-TTS (Tara voice, 1000 max tokens, vllm CUDA).
+    ApiNotes: Synthesizes speech from text using Orpheus GGUF backend via gguf_orpheus.py.
     If wav_path is None, creates a temporary file and returns its path.
     Returns the path to the generated WAV file.
     """
     assert text is not None and isinstance(text, str) and text.strip(), "ApiNotes: text must be a non-empty string"
-    payload = {
-        "text": text,
-        "voice": voice or ORPHEUS_TTS_VOICE,
-        "max_tokens": ORPHEUS_TTS_MAX_TOKENS,
-        "sample_rate": sample_rate
-    }
-    response = requests.post(ORPHEUS_TTS_URL, json=payload)
-    assert response.status_code == 200, f"Orpheus-TTS API error: {response.status_code} {response.text}"
-    audio_bytes = response.content
+    # Use default voice if not specified
+    use_voice = voice or AVAILABLE_VOICES[0]
+    # If wav_path is None, create a temp file
     if wav_path is None:
         fd, wav_path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
-    with open(wav_path, "wb") as f:
-        f.write(audio_bytes)
+    # Call Orpheus GGUF API via gguf_orpheus
+    generate_speech_from_api(
+        prompt=text,
+        voice=use_voice,
+        output_file=wav_path
+    )
     # Defensive: Ensure file was created
     assert os.path.exists(wav_path), f"ApiNotes: TTS output file not created at {wav_path}"
     # Optionally, resample to target sample_rate if needed
@@ -112,29 +114,12 @@ def synthesize_audio(text, wav_path=None, sample_rate=22050, voice=None, rate=No
         sf.write(wav_path, data_resampled, sample_rate)
     return wav_path
 
-# def extract_opensmile_features(wav_path, config_path=None):
-#     """
-#     ApiNotes: Extracts acoustic features from wav_path using OpenSMILE and the specified config file.
-#     Uses conf/opensmile/emo_large.conf by default.
-#     Returns a dictionary of all features for direct LLM training and analysis.
-#     """
-#     # Reference: file-level ApiNotes, imperative paradigm
-#     assert opensmile is not None, "opensmile must be installed for feature extraction"
-#     if config_path is None:
-#         config_path = DEFAULT_OPENSMILE_CONFIG
-#     assert os.path.exists(config_path), f"OpenSMILE config not found: {config_path}"
-#     smile = opensmile.Smile(
-#         feature_set=opensmile.FeatureSet.eGeMAPSv02,  # Use a generic set; config file will override
-#         feature_level=opensmile.FeatureLevel.Functionals,
-#     )
-#     features = smile.process_file(wav_path)
-#     # Convert DataFrame to dict and return all features
-#     return features.iloc[0].to_dict()
 
-# Usage example: Return all features for LLM training
+
+
 def example_return_features_for_llm():
     """
-    ApiNotes: Example usage for returning all features to the application for LLM training (Orpheus-TTS backend).
+    ApiNotes: Example usage for returning all features to the application for LLM training (Orpheus GGUF backend).
     """
     text = "The quick brown fox jumps over the lazy dog."
     wav_path = synthesize_audio(text)
@@ -146,6 +131,7 @@ def example_return_features_for_llm():
     return features, text
 
 # Acceptance test (expected success/failure)
+
 def test_synthesize_and_extract_expected_success():
     text = "The quick brown fox jumps over the lazy dog."
     wav_path = synthesize_audio(text)
@@ -154,6 +140,7 @@ def test_synthesize_and_extract_expected_success():
     assert isinstance(features, dict) and len(features) > 0, "Features dict should not be empty"
     print("TTS and OpenSMILE extraction succeeded:", features)
     os.remove(wav_path)
+
 
 def test_synthesize_and_extract_expected_failure():
     try:
@@ -164,6 +151,7 @@ def test_synthesize_and_extract_expected_failure():
         extract_opensmile_features("nonexistent.wav")
     except Exception as e:
         print(f"(expected failure) {e}")
+
 
 # ApiNotes: This implementation is imperative, modular, and justified by file-level and project-level ApiNotes.
 #           All interface and behavioral assumptions are documented.

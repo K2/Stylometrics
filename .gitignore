@@ -66,3 +66,14 @@ docs/generated/
 genaiscript.d.ts
 tsconfig.json
 jsconfig.json
+
+
+.venv
+**/__pycache__/**
+
+old
+outputs
+llm_guided_logs
+**/wandb/**
+audio
+**.wav

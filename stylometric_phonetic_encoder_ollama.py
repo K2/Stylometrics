@@ -118,8 +118,6 @@ from dataset_helpers import (
     text_to_phonemes, phoneme_vec, cosine, text_syllables, eightword_harmonic_score,
     summarize_acoustic_examples, format_acoustic_examples_for_prompt, load_warmup_data
 )
-from tsfm_adapter import arff_csv_to_timeseries  # glue: import adapter for ARFF/CSV parsing
-
 # default config path for tsfm_adapter
 TSFM_CONFIG_PATH = "conf/opensmile/emo_large.conf"
 

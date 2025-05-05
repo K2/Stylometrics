@@ -62,7 +62,7 @@ We offer a standardised prompt format across languages, and these notebooks illu
    start_time = time.monotonic()
    syn_tokens = model.generate_speech(
       prompt=prompt,
-      voice="tara",
+      voice="tara",  
       )
 
    with wave.open("output.wav", "wb") as wf:

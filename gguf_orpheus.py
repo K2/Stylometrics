@@ -12,13 +12,13 @@ import queue
 import asyncio
 
 # LM Studio API settings
-API_URL = "http://127.0.0.1:1234/v1/completions"
+API_URL = "http://127.0.0.1:11434/v1/completions"
 HEADERS = {
     "Content-Type": "application/json"
 }
 
 # Model parameters
-MAX_TOKENS = 1200
+MAX_TOKENS = 2048
 TEMPERATURE = 0.6
 TOP_P = 0.9
 REPETITION_PENALTY = 1.1
@@ -56,7 +56,7 @@ def generate_tokens_from_api(prompt, voice=DEFAULT_VOICE, temperature=TEMPERATUR
     
     # Create the request payload for the LM Studio API
     payload = {
-        "model": "orpheus-3b-0.1-ft-q4_k_m",  # Model name can be anything, LM Studio ignores it
+        "model": "hf.co/isaiahbjork/orpheus-3b-0.1-ft-Q4_K_M-GGUF:Q4_K_M",  # Model name can be anything, LM Studio ignores it
         "prompt": formatted_prompt,
         "max_tokens": max_tokens,
         "temperature": temperature,
@@ -124,8 +124,8 @@ def turn_token_into_id(token_string, index):
 def convert_to_audio(multiframe, count):
     """Convert token frames to audio."""
     # Import here to avoid circular imports
-    from decoder import convert_to_audio as orpheus_convert_to_audio
-    return orpheus_convert_to_audio(multiframe, count)
+    import orpheus_tts.decoder
+    return orpheus_tts.decoder.convert_to_audio(multiframe, count)
 
 async def tokens_decoder(token_gen):
     """Asynchronous token decoder that converts token stream to audio stream."""
