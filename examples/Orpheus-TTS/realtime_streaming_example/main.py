@@ -96,12 +96,14 @@ def tts(engine):
         assert prompt and isinstance(prompt, str) and prompt.strip(), 'POST /tts: "text" must be a non-empty string'
         voice = data.get('voice', 'tara')
         max_tokens = data.get('max_tokens', 512)
+        max_tokens = data.get('max_tokens', 512)
         sample_rate = data.get('sample_rate', 24000)
         gpu_memory_utilization  = data.get('gpu_memory_utilization', 1.0)
     else:
         # GET fallback for browser/debug use
         prompt = request.args.get('prompt', 'Hey there, looks like you forgot to provide a prompt!')
         voice = 'tara'
+        max_tokens = 512
         max_tokens = 512
         sample_rate = 24000
 
@@ -123,10 +125,12 @@ def create_app():
         model_name="canopylabs/orpheus-tts-0.1-finetune-prod",
         #dtype=torch.float16,
         gpu_memory_utilization=1.0,
-        max_model_len=512,
-        max_model_len=512,
+        max_model_len=32768,
         enable_prefix_caching=False,
-        max_num_batched_tokens=54,
+        max_num_batched_tokens=1500,
+        max_batch_size=1,  # <-- Reduce to 1 for real-time streaming
+        max_batch_size_per_gpu=1,  # <-- Reduce to 1 for real-time streaming
+        max_num_seqs_per_gpu=1,  # <-- Reduce to 1 for real-time streaming
         max_num_seqs=1,  # <-- Reduce to 1 for real-time streaming
         
     )
